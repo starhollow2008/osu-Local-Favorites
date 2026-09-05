@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.4.9
+// @version      5.4.10
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -376,7 +376,10 @@
   // native GM mode this event never fires for GM storage — init()'s
   // GM_addValueChangeListener handler covers that path instead.)
   window.addEventListener("storage", (e) => {
-    if (!e.key || e.key === _GM_FALLBACK_LS_KEY) _favsCache = null;
+    if (!e.key || e.key === _GM_FALLBACK_LS_KEY) {
+      _favsCache = null;
+      _colsCache = null;
+    }
   });
 
   function isFavorited(id) {
@@ -388,11 +391,21 @@
   // collections. Stored as { [collectionId]: { name, created, ids: [beatmapId,...] } }.
   const COLLECTIONS_KEY = "osu_fav_collections";
 
+  // In-memory write-through cache, mirroring the favorites store above.
+  // Every card row's "+ Playlist" badge calls collectionsContainingMap() 2-3
+  // times during buildCard, and each of those used to deserialize the whole
+  // collections store out of GM storage — 1000+ reads for a single 500-card
+  // render. All writers go through setCollections(), so caching is coherent;
+  // cross-tab invalidation matches the favorites cache (storage event below +
+  // GM_addValueChangeListener in init()).
+  let _colsCache = null;
   function getCollections() {
-    return GM_getValue(COLLECTIONS_KEY, {});
+    if (_colsCache === null) _colsCache = GM_getValue(COLLECTIONS_KEY, {});
+    return _colsCache;
   }
 
   function setCollections(cols) {
+    _colsCache = cols;
     GM_setValue(COLLECTIONS_KEY, cols);
   }
 
@@ -592,15 +605,29 @@
   // Used to decide whether "Official Download" is worth offering at all —
   // osu!'s download route requires server-side auth and simply doesn't work
   // for guests regardless of what our script does.
+  //
+  // Memoized on the blob's exact text: buildCard() reaches this via both
+  // resolveDefaultMirror() and buildDownloadOptions() once per card, so a
+  // single 500-card panel render used to re-parse the same JSON blob ~1000
+  // times. Keying the cache on the raw text (not just a one-shot boolean)
+  // keeps it correct if Turbolinks swaps in a different user blob.
+  let _loggedInCache = null;
+  let _loggedInCacheKey = null;
   function isLoggedIn() {
     const el = document.getElementById("json-current-user");
     if (!el) return false;
+    const raw = el.textContent;
+    if (_loggedInCache !== null && _loggedInCacheKey === raw) return _loggedInCache;
+    let result = false;
     try {
-      const data = JSON.parse(el.textContent);
-      return !!(data && data.id);
+      const data = JSON.parse(raw);
+      result = !!(data && data.id);
     } catch (e) {
-      return false;
+      result = false;
     }
+    _loggedInCache = result;
+    _loggedInCacheKey = raw;
+    return result;
   }
 
   // Which video variant to prefer, and whether Official or Mirrors should be
@@ -3057,6 +3084,11 @@
   //     whether from a prior favourite or an earlier row in *this* run)
   //     means a 20-diff mapset only ever gets added once.
   function addFavoriteAllButtons() {
+    // The .js-sortable--page sections these buttons attach to only exist on
+    // profile pages. Everything below is four querySelector calls per call —
+    // and this runs on every debounced mutation pass and the 1.5s interval —
+    // so bail before any DOM work on pages that can't possibly match.
+    if (!/\/users\//.test(location.pathname)) return;
     addFavoriteAllButton({
       pageId: "beatmaps",
       headingMatch: (t) => t.includes("Favourite") || t.includes("Favorite"),
@@ -3224,6 +3256,14 @@
   const IND_POS_KEY = "osu_fav_ind_pos"; // {right,bottom} px from bottom-right
 
   function indApplyVisual(ind, fav, dragging) {
+    // updateFloatingHeart() runs on every debounced DOM-mutation pass and
+    // every cross-tab sync; rebuilding the SVG innerHTML each time churned
+    // the DOM (parse + node replacement + style invalidation) several times
+    // per second even when the heart's state hadn't changed. Skip when the
+    // visual state is identical — the very first call still renders.
+    if (ind._lastFav === fav && ind._lastDragging === dragging) return;
+    ind._lastFav = fav;
+    ind._lastDragging = dragging;
     ind.innerHTML = heartSVG(fav);
     ind.style.background = "rgba(17,17,17,0.95)";
     ind.style.border = fav ? "1px solid var(--osu-fav-accent)" : "1px solid #333";
@@ -3463,7 +3503,17 @@
       "button, span.beatmapset-panel__menu-item",
     );
     candidates.forEach((btn) => {
-      if (!isFavButton(btn) || btn.dataset.osuFavChecked) return;
+      // Cheapest checks first. The dataset flag must gate BEFORE isFavButton()
+      // — the old order ran the full heuristic (several querySelector calls
+      // per candidate) on every already-processed button on every pass. And
+      // everything inside our own UI is skipped outright: an open favorites
+      // panel alone can hold thousands of <button>s (rows × Open/Download/
+      // Remove/preview), each of which would otherwise run isFavButton() —
+      // and always fail — on every debounced mutation pass and 1.5s interval
+      // tick for as long as the panel stays open.
+      if (btn.dataset.osuFavChecked) return;
+      if (btn.closest("#osu-local-fav-panel, #osu-fav-dl-menu, #osu-local-fav-ind")) return;
+      if (!isFavButton(btn)) return;
       const ctx = resolveBeatmapContext(btn);
       // Context couldn't be resolved yet — this is common when a card is
       // still mid-render (fast scroll / infinite-load on search & profile
@@ -3736,9 +3786,20 @@
       "blur",
       () => (searchInput.style.borderColor = "#333"),
     );
+    // Debounced search: renderList() re-filters, re-sorts, and rebuilds the
+    // whole visible list from scratch (chunked over rAF, but still). On a
+    // 500+ map library every keystroke used to pay that full price — typing
+    // a 10-character query ran it 10 times in quick succession. A 150ms
+    // debounce keeps the live-filter feel while collapsing a typing burst
+    // into one render.
+    let searchRenderTimer = null;
     searchInput.addEventListener("input", () => {
       searchQuery = searchInput.value;
-      renderList();
+      if (searchRenderTimer) clearTimeout(searchRenderTimer);
+      searchRenderTimer = setTimeout(() => {
+        searchRenderTimer = null;
+        renderList();
+      }, 150);
     });
 
     header.appendChild(headerTop);
@@ -6481,8 +6542,11 @@
 
           // Another tab replaced the favorites store — drop this tab's
           // in-memory copy so the next getFavorites() re-reads persisted
-          // state instead of serving a now-stale cached object.
+          // state instead of serving a now-stale cached object. Same for
+          // the collections cache (collections can also be edited in
+          // another tab).
           _favsCache = null;
+          _colsCache = null;
 
           // Re-render floating heart (filled/outline SVG) for the current beatmap
           updateFloatingHeart();
@@ -6582,6 +6646,11 @@
         });
       document.querySelectorAll(".osu-fav-all-btn").forEach((el) => el.remove());
       document.querySelectorAll("[data-osu-fav-checked]").forEach((btn) => btn.removeAttribute("data-osu-fav-checked"));
+      // Beatmap context (isLoggedIn's cached user blob, mirror row state)
+      // is per-page — a Turbolinks navigation may land on a different page
+      // as a different (or no) user, so stale caches must not survive it.
+      _loggedInCache = null;
+      _loggedInCacheKey = null;
       attachMainObserver();
       ensureHeartIndicator();
       addFavoriteAllButtons();
