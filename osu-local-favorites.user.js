@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.4.5
+// @version      5.5.0
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -376,7 +376,10 @@
   // native GM mode this event never fires for GM storage — init()'s
   // GM_addValueChangeListener handler covers that path instead.)
   window.addEventListener("storage", (e) => {
-    if (!e.key || e.key === _GM_FALLBACK_LS_KEY) _favsCache = null;
+    if (!e.key || e.key === _GM_FALLBACK_LS_KEY) {
+      _favsCache = null;
+      _colsCache = null;
+    }
   });
 
   function isFavorited(id) {
@@ -388,11 +391,21 @@
   // collections. Stored as { [collectionId]: { name, created, ids: [beatmapId,...] } }.
   const COLLECTIONS_KEY = "osu_fav_collections";
 
+  // In-memory write-through cache, mirroring the favorites store above.
+  // Every card row's "+ Playlist" badge calls collectionsContainingMap() 2-3
+  // times during buildCard, and each of those used to deserialize the whole
+  // collections store out of GM storage — 1000+ reads for a single 500-card
+  // render. All writers go through setCollections(), so caching is coherent;
+  // cross-tab invalidation matches the favorites cache (storage event below +
+  // GM_addValueChangeListener in init()).
+  let _colsCache = null;
   function getCollections() {
-    return GM_getValue(COLLECTIONS_KEY, {});
+    if (_colsCache === null) _colsCache = GM_getValue(COLLECTIONS_KEY, {});
+    return _colsCache;
   }
 
   function setCollections(cols) {
+    _colsCache = cols;
     GM_setValue(COLLECTIONS_KEY, cols);
   }
 
@@ -592,15 +605,29 @@
   // Used to decide whether "Official Download" is worth offering at all —
   // osu!'s download route requires server-side auth and simply doesn't work
   // for guests regardless of what our script does.
+  //
+  // Memoized on the blob's exact text: buildCard() reaches this via both
+  // resolveDefaultMirror() and buildDownloadOptions() once per card, so a
+  // single 500-card panel render used to re-parse the same JSON blob ~1000
+  // times. Keying the cache on the raw text (not just a one-shot boolean)
+  // keeps it correct if Turbolinks swaps in a different user blob.
+  let _loggedInCache = null;
+  let _loggedInCacheKey = null;
   function isLoggedIn() {
     const el = document.getElementById("json-current-user");
     if (!el) return false;
+    const raw = el.textContent;
+    if (_loggedInCache !== null && _loggedInCacheKey === raw) return _loggedInCache;
+    let result = false;
     try {
-      const data = JSON.parse(el.textContent);
-      return !!(data && data.id);
+      const data = JSON.parse(raw);
+      result = !!(data && data.id);
     } catch (e) {
-      return false;
+      result = false;
     }
+    _loggedInCache = result;
+    _loggedInCacheKey = raw;
+    return result;
   }
 
   // Which video variant to prefer, and whether Official or Mirrors should be
@@ -671,13 +698,24 @@
   // the preview player at it is a strict upgrade, never a worse experience
   // than what we already show. No auth, open CORS, HTTP Range for seeking.
   const PREVIEW_FULLSONG_KEY = "osu_preview_fullsong";
+
+  // Firefox for Android on some devices (including Redmi models) is much
+  // less forgiving of a cold cross-origin stream. Keep the mirror as the
+  // primary source when full-song previews are enabled, but do not make the
+  // first tap compete with a second GM_xmlhttpRequest cache download. If the
+  // mirror is unavailable, undecodable, or only has the short clip, the
+  // player falls back to osu!'s direct preview below.
+  function isFirefoxAndroid() {
+    const ua = navigator.userAgent || "";
+    return /Android/i.test(ua) && /Firefox\//i.test(ua);
+  }
+
   function fullSongPreviewsEnabled() {
     return GM_getValue(PREVIEW_FULLSONG_KEY, true);
   }
   function previewSourceUrl(id, fallbackUrl) {
-    return fullSongPreviewsEnabled()
-      ? `https://mirror.hinamizawa.ai/v3/osu/music/audio/${id}`
-      : fallbackUrl;
+    if (!fullSongPreviewsEnabled()) return fallbackUrl;
+    return `https://mirror.hinamizawa.ai/v3/osu/music/audio/${id}`;
   }
 
   // ═══ Music Playback settings (loop / auto next / shuffle / volume) ═══
@@ -709,6 +747,9 @@
   //
   // "never" skips the cache store entirely (identical to how this script
   // behaved before this feature existed - always straight to the network).
+  // Firefox Android also bypasses this cache's background XHR path; normal
+  // <img>/<audio> requests remain enabled, so mobile gets the browser's own
+  // connection/cache handling without dozens of Tampermonkey requests.
   // "always" caches with no expiry; entries only change if the URL itself
   // does. Every other mode is a fixed, or user-typed custom, TTL.
   const CACHE_DURATION_KEY = "osu_cache_duration"; // "custom"|"30min"|"1h"|"6h"|"12h"|"24h"|"1week"|"1month"|"always"|"never"
@@ -891,10 +932,13 @@
   // network URL unchanged - so a cache miss never delays first-time
   // playback/display waiting on a full download. A miss also kicks off a
   // background fetch to populate the cache for next time; fire-and-forget,
-  // not awaited by the caller either way.
+  // not awaited by the caller either way. Firefox Android deliberately skips
+  // this background fetch entirely: GM_xmlhttpRequest can queue one large
+  // request per visible cover in Tampermonkey and make the first page load
+  // compete with osu!'s own resources on mobile.
   function resolveCachedMediaUrl(url) {
     if (!url) return Promise.resolve(url);
-    if (cacheDurationMode() === "never") return Promise.resolve(url);
+    if (isFirefoxAndroid() || cacheDurationMode() === "never") return Promise.resolve(url);
 
     return cacheGet(url).then((entry) => {
       const ttl = cacheDurationMs();
@@ -925,9 +969,8 @@
     });
   }
 
-  // A clip this short means Hinamizawa doesn't have the full track cached
-  // and previewSourceUrl() fell back to osu!'s own ~10s clip - see the
-  // "skip if not on Hina" check in ensureAudio() below.
+  // A clip this short means Hinamizawa does not have the full track cached;
+  // the media handlers below then switch to osu!'s own ~10s preview.
   const SHORT_CLIP_MAX_SECONDS = 15;
 
   // Singleton <audio> element, shared across every card's preview button
@@ -944,7 +987,11 @@
     // after an async cache lookup) keeps Firefox Android's media session tied
     // to a conventional media resource and, importantly, preserves the
     // original click's user activation for audio.play().
-    audio.preload = "metadata";
+    // Firefox Android on Redmi devices starts media more reliably when the
+    // element is not asked to fetch metadata before the tap. Calling play()
+    // below still starts the request immediately from the user gesture.
+    audio.preload = isFirefoxAndroid() ? "none" : "metadata";
+    audio.setAttribute("playsinline", "");
     audio.volume = musicVolumePct() / 100;
     window._osuFavAudio = audio;
     audio._activeBtn = null;
@@ -964,6 +1011,9 @@
     audio._queueDirection = 1;
     audio._queueSkipAttempt = 0;
     audio._queueAdvance = null;
+    audio._fallbackPreviewUrl = null;
+    audio._usingFullSongSource = false;
+    audio._sourceFallbackAttempted = false;
 
     audio.addEventListener("timeupdate", () => {
       const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
@@ -1055,14 +1105,53 @@
       } catch (_) {}
     });
 
+    function fallbackToOfficialPreview(sourceAtEvent) {
+      const mirrorUrl = audio._activePreviewUrl;
+      const currentSource = audio.currentSrc || audio.src;
+      const fallbackUrl = audio._fallbackPreviewUrl;
+      if (
+        !audio._usingFullSongSource ||
+        audio._sourceFallbackAttempted ||
+        !fallbackUrl ||
+        !mirrorUrl ||
+        (sourceAtEvent && currentSource !== sourceAtEvent)
+      ) return false;
+
+      audio._sourceFallbackAttempted = true;
+      audio._usingFullSongSource = false;
+      audio._activePreviewUrl = fallbackUrl;
+      audio.src = fallbackUrl;
+      audio.load();
+      const retry = audio.play();
+      if (retry && typeof retry.catch === "function") {
+        retry.catch(() => resetPlaybackAfterError(audio));
+      }
+      return true;
+    }
+
     audio.addEventListener("loadedmetadata", () => {
-      if (!audio._queueNavigated) return;
-      if (!fullSongPreviewsEnabled()) return;
+      if (!audio._usingFullSongSource) return;
       if (!isFinite(audio.duration) || audio.duration > SHORT_CLIP_MAX_SECONDS) return;
-      if (audio._queueAdvance) {
-        const dir = audio._queueDirection || 1;
-        const attempt = (audio._queueSkipAttempt || 0) + 1;
-        audio._queueAdvance(dir, { skipAttempt: attempt });
+      // The mirror endpoint uses the short osu! clip when it has no full
+      // track. Do not expose that as the selected result: switch to osu!'s
+      // official preview instead, for direct clicks and queue navigation.
+      fallbackToOfficialPreview(audio.currentSrc || audio.src);
+    });
+
+    // A mirror can be cold, unavailable, or return a response Firefox cannot
+    // decode. Retry the official osu! clip once, but only for the source that
+    // is currently active so a late error from an old track cannot interrupt a
+    // newly selected one.
+    audio.addEventListener("error", () => {
+      const currentSource = audio.currentSrc || audio.src;
+      if (audio._usingFullSongSource) {
+        fallbackToOfficialPreview(currentSource);
+      } else if (
+        audio._sourceFallbackAttempted &&
+        audio._fallbackPreviewUrl &&
+        currentSource === audio._fallbackPreviewUrl
+      ) {
+        resetPlaybackAfterError(audio);
       }
     });
 
@@ -1101,6 +1190,34 @@
     });
 
     return audio;
+  }
+
+  // Clears player state after both the initial source and its one fallback
+  // have failed. Kept small because it is also used by the media error path,
+  // before a panel-specific card binding necessarily exists.
+  function resetPlaybackAfterError(audio) {
+    if (audio._activeBtn) {
+      audio._activeBtn.innerHTML = playSVG();
+      audio._activeBtn._playing = false;
+      audio._activeBtn.style.opacity = "var(--osu-fav-idle-opacity, 0.15)";
+      audio._activeBtn.style.borderColor = "#333";
+      audio._activeBtn.style.color = "#999";
+    }
+    if (audio._activeBar) {
+      audio._activeBar.parentElement.style.display = "none";
+      audio._activeBar.style.width = "0%";
+    }
+    if (audio._activeDim) audio._activeDim.style.background = "rgba(51,51,51,var(--osu-fav-idle-dim, 0))";
+    audio._activeBtn = null;
+    audio._activeBar = null;
+    audio._activeDim = null;
+    if (audio._npBar) audio._npBar.style.display = "none";
+    if (audio._npProgressBar) audio._npProgressBar.style.width = "0%";
+    audio._npCurrentId = null;
+    audio._npCurrentTitle = "";
+    audio._npCurrentArtist = "";
+    audio._queueAdvance = null;
+    if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "none";
   }
 
   // Builds the ordered list of download options for a beatmapset. Official
@@ -2671,6 +2788,25 @@
       setEnrichQueue(q);
     }
   }
+
+  // Batch queue migration/import writes. Calling addToEnrichQueue once per
+  // favorite makes native Tampermonkey serialize and persist the entire
+  // queue once per item, which can make the first page load painfully slow
+  // for a large existing library.
+  function addManyToEnrichQueue(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) return;
+    const q = getEnrichQueue();
+    const known = new Set(q);
+    let changed = false;
+    ids.forEach((id) => {
+      if (known.has(id)) return;
+      known.add(id);
+      q.push(id);
+      changed = true;
+    });
+    if (changed) setEnrichQueue(q);
+  }
+
   function removeFromEnrichQueue(id) {
     const q = getEnrichQueue();
     const idx = q.indexOf(id);
@@ -2948,6 +3084,11 @@
   //     whether from a prior favourite or an earlier row in *this* run)
   //     means a 20-diff mapset only ever gets added once.
   function addFavoriteAllButtons() {
+    // The .js-sortable--page sections these buttons attach to only exist on
+    // profile pages. Everything below is four querySelector calls per call —
+    // and this runs on every debounced mutation pass and the 1.5s interval —
+    // so bail before any DOM work on pages that can't possibly match.
+    if (!/\/users\//.test(location.pathname)) return;
     addFavoriteAllButton({
       pageId: "beatmaps",
       headingMatch: (t) => t.includes("Favourite") || t.includes("Favorite"),
@@ -3086,7 +3227,7 @@
           // partway through used to lose genre/language/tags permanently
           // for whatever hadn't been reached yet. Now the background
           // drainer just resumes where this left off on a later page load.
-          newIds.forEach(addToEnrichQueue);
+          addManyToEnrichQueue(newIds);
           // Enrich each new beatmapset sequentially — respects ENRICH_RATE_LIMIT_MS
           // (1 request/sec), the same throttle every other bulk/re-enrich path uses.
           enrichBeatmapsSequential(newIds);
@@ -3115,6 +3256,14 @@
   const IND_POS_KEY = "osu_fav_ind_pos"; // {right,bottom} px from bottom-right
 
   function indApplyVisual(ind, fav, dragging) {
+    // updateFloatingHeart() runs on every debounced DOM-mutation pass and
+    // every cross-tab sync; rebuilding the SVG innerHTML each time churned
+    // the DOM (parse + node replacement + style invalidation) several times
+    // per second even when the heart's state hadn't changed. Skip when the
+    // visual state is identical — the very first call still renders.
+    if (ind._lastFav === fav && ind._lastDragging === dragging) return;
+    ind._lastFav = fav;
+    ind._lastDragging = dragging;
     ind.innerHTML = heartSVG(fav);
     ind.style.background = "rgba(17,17,17,0.95)";
     ind.style.border = fav ? "1px solid var(--osu-fav-accent)" : "1px solid #333";
@@ -3354,7 +3503,17 @@
       "button, span.beatmapset-panel__menu-item",
     );
     candidates.forEach((btn) => {
-      if (!isFavButton(btn) || btn.dataset.osuFavChecked) return;
+      // Cheapest checks first. The dataset flag must gate BEFORE isFavButton()
+      // — the old order ran the full heuristic (several querySelector calls
+      // per candidate) on every already-processed button on every pass. And
+      // everything inside our own UI is skipped outright: an open favorites
+      // panel alone can hold thousands of <button>s (rows × Open/Download/
+      // Remove/preview), each of which would otherwise run isFavButton() —
+      // and always fail — on every debounced mutation pass and 1.5s interval
+      // tick for as long as the panel stays open.
+      if (btn.dataset.osuFavChecked) return;
+      if (btn.closest("#osu-local-fav-panel, #osu-fav-dl-menu, #osu-local-fav-ind")) return;
+      if (!isFavButton(btn)) return;
       const ctx = resolveBeatmapContext(btn);
       // Context couldn't be resolved yet — this is common when a card is
       // still mid-render (fast scroll / infinite-load on search & profile
@@ -3627,9 +3786,20 @@
       "blur",
       () => (searchInput.style.borderColor = "#333"),
     );
+    // Debounced search: renderList() re-filters, re-sorts, and rebuilds the
+    // whole visible list from scratch (chunked over rAF, but still). On a
+    // 500+ map library every keystroke used to pay that full price — typing
+    // a 10-character query ran it 10 times in quick succession. A 150ms
+    // debounce keeps the live-filter feel while collapsing a typing burst
+    // into one render.
+    let searchRenderTimer = null;
     searchInput.addEventListener("input", () => {
       searchQuery = searchInput.value;
-      renderList();
+      if (searchRenderTimer) clearTimeout(searchRenderTimer);
+      searchRenderTimer = setTimeout(() => {
+        searchRenderTimer = null;
+        renderList();
+      }, 150);
     });
 
     header.appendChild(headerTop);
@@ -3996,14 +4166,20 @@
     // Now Playing bar. `navigated` marks a track reached via Back/Next/
     // auto-next/shuffle rather than a direct click on its own preview
     // button, which is what gates the "skip if not on Hina" check in
-    // ensureAudio().
+    // ensureAudio(). The full-song mirror remains the primary source whenever
+    // enabled; the official short preview is selected only by the fallback
+    // path if the mirror fails or reports a short clip.
     function startPlayback(id, f, opts = {}) {
       const { navigated = false, direction = 1, skipAttempt = 0 } = opts;
       const audio = ensureAudio();
       resetActiveCardUI(audio);
       audio.pause();
 
-      const previewUrl = previewSourceUrl(id, f.preview || `https://b.ppy.sh/preview/${id}.mp3`);
+      const fallbackPreviewUrl = f.preview || `https://b.ppy.sh/preview/${id}.mp3`;
+      const previewUrl = previewSourceUrl(id, fallbackPreviewUrl);
+      audio._fallbackPreviewUrl = fallbackPreviewUrl;
+      audio._usingFullSongSource = previewUrl !== fallbackPreviewUrl;
+      audio._sourceFallbackAttempted = false;
       audio._queueNavigated = navigated;
       audio._queueDirection = direction;
       audio._queueSkipAttempt = skipAttempt;
@@ -4068,9 +4244,9 @@
       // cache lookup before calling play(). The promise continuation is no
       // longer part of the original tap/click's user-activation chain, so
       // mobile autoplay policy can reject audio.play() with NotAllowedError.
-      // Use the normal HTTPS media URL directly for playback. The cache still
-      // populates in the background and remains available for covers/future
-      // data, but it no longer sits between the user gesture and playback.
+      // Use the selected HTTPS source (the full-song mirror when enabled) and
+      // let the media error/short-clip handlers above choose osu!'s official
+      // preview only when the mirror cannot provide the track.
       if (audio._activePreviewUrl && audio._activePreviewUrl !== previewUrl) {
         const prevBlobUrl = _blobUrlCache.get(audio._activePreviewUrl);
         if (prevBlobUrl) {
@@ -4091,20 +4267,18 @@
       }
 
       // Keep the IndexedDB copy warm without making playback depend on it.
-      // This is intentionally fire-and-forget.
-      if (cacheDurationMode() !== "never") {
+      // Firefox Android gets no parallel full-file download here; its media
+      // element owns the first request so the mirror can start from the tap.
+      if (cacheDurationMode() !== "never" && !isFirefoxAndroid()) {
         gmFetchBlob(previewUrl).then((blob) => {
           if (blob) cachePut(previewUrl, blob);
         });
       }
     }
 
-    // Moves to the next (direction 1) or previous (direction -1) track in
-    // the currently visible, sorted/filtered list. Shuffle picks a random
-    // track instead of stepping in order. skipAttempt is only set when
-    // we're being called again because the last pick turned out not to be
-    // on Hinamizawa - it caps how many times we'll auto-skip in a row so a
-    // list with nothing cached doesn't chain into an infinite loop.
+  // Moves to the next (direction 1) or previous (direction -1) track in
+  // the currently visible, sorted/filtered list. Shuffle picks a random
+  // track instead of stepping in order.
     function queueAdvance(direction, opts = {}) {
       const entries = renderList._entries || [];
       if (!entries.length) return;
@@ -6333,21 +6507,24 @@
     osuApiHandleOAuthCallback();
 
     // One-time-per-favorite migration: back-fill the enrichment queue with
-    // any favorite that's missing genre data. osu!'s API always returns a
-    // genre object (even "Unspecified" has one), so an empty genre string
-    // reliably means this favorite was saved from a listing card and either
-    // never got enriched or a past attempt didn't survive to completion —
-    // both are exactly what the queue+drainer above now handle. Cheap to
-    // run every load: IDs already in the queue are skipped by addToEnrichQueue,
-    // and once a favorite has real data it never gets re-added.
-    try {
-      const favs = getFavorites();
-      const favsNeedingGenre = Object.keys(favs).filter((id) => !favs[id].genre);
-      if (favsNeedingGenre.length) {
-        favsNeedingGenre.forEach(addToEnrichQueue);
-      }
-    } catch (e) { /* never break page load over this */ }
-    if (getEnrichQueue().length) ensureEnrichDrainerRunning();
+    // any favorite that's missing genre data. Defer this potentially large
+    // scan and persist it with one batched GM write after the page gets a
+    // chance to render. The old per-favorite loop serialized and persisted
+    // the entire queue once per item, making first load scale badly in
+    // Tampermonkey, especially on Firefox Android.
+    const migrateEnrichmentQueue = () => {
+      try {
+        const favs = getFavorites();
+        const favsNeedingGenre = Object.keys(favs).filter((id) => !favs[id].genre);
+        addManyToEnrichQueue(favsNeedingGenre);
+        if (getEnrichQueue().length) ensureEnrichDrainerRunning();
+      } catch (e) { /* never break page load over this */ }
+    };
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(migrateEnrichmentQueue, { timeout: 2500 });
+    } else {
+      setTimeout(migrateEnrichmentQueue, 1500);
+    }
 
     // ═══ Cross-tab sync ═══
     // When another tab writes to the favorites key, refresh all UI in this tab.
@@ -6365,8 +6542,11 @@
 
           // Another tab replaced the favorites store — drop this tab's
           // in-memory copy so the next getFavorites() re-reads persisted
-          // state instead of serving a now-stale cached object.
+          // state instead of serving a now-stale cached object. Same for
+          // the collections cache (collections can also be edited in
+          // another tab).
           _favsCache = null;
+          _colsCache = null;
 
           // Re-render floating heart (filled/outline SVG) for the current beatmap
           updateFloatingHeart();
@@ -6466,6 +6646,11 @@
         });
       document.querySelectorAll(".osu-fav-all-btn").forEach((el) => el.remove());
       document.querySelectorAll("[data-osu-fav-checked]").forEach((btn) => btn.removeAttribute("data-osu-fav-checked"));
+      // Beatmap context (isLoggedIn's cached user blob, mirror row state)
+      // is per-page — a Turbolinks navigation may land on a different page
+      // as a different (or no) user, so stale caches must not survive it.
+      _loggedInCache = null;
+      _loggedInCacheKey = null;
       attachMainObserver();
       ensureHeartIndicator();
       addFavoriteAllButtons();
