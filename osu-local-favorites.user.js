@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.5.1
+// @version      5.5.2
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -973,6 +973,45 @@
   // the media handlers below then switch to osu!'s own ~10s preview.
   const SHORT_CLIP_MAX_SECONDS = 15;
 
+  function hasMediaSession() {
+    return "mediaSession" in navigator && navigator.mediaSession;
+  }
+
+  function setMediaSessionPlaybackState(state) {
+    if (!hasMediaSession()) return;
+    try {
+      navigator.mediaSession.playbackState = state;
+    } catch (_) {}
+  }
+
+  function getMediaSessionArtwork(favorite, id) {
+    const covers = favorite && favorite.covers;
+    const stored = covers && (covers.card || covers["card@2x"] || covers.list || covers.cover);
+    return stored || (id ? `https://assets.ppy.sh/beatmaps/${id}/covers/card.jpg` : "");
+  }
+
+  function setMediaSessionMetadata(audio) {
+    if (!hasMediaSession() || typeof MediaMetadata !== "function" || !audio._npCurrentId) return;
+    const fav = getFavorites()[audio._npCurrentId] || {};
+    const artwork = getMediaSessionArtwork(fav, audio._npCurrentId);
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: audio._npCurrentTitle || "Unknown",
+        artist: audio._npCurrentArtist || "",
+        album: "osu! Local Favorites",
+        artwork: artwork ? [{ src: artwork }] : [],
+      });
+    } catch (_) {}
+  }
+
+  function clearMediaSession() {
+    if (!hasMediaSession()) return;
+    try {
+      navigator.mediaSession.metadata = null;
+    } catch (_) {}
+    setMediaSessionPlaybackState("none");
+  }
+
   // Singleton <audio> element, shared across every card's preview button
   // and the Now Playing bar. Created once per page load and reused for the
   // lifetime of the tab, so its listeners key off dynamic `_np*`/`_queue*`
@@ -981,7 +1020,7 @@
   // stale the moment that panel is closed and reopened.
   function ensureAudio() {
     if (window._osuFavAudio) return window._osuFavAudio;
-    const audio = new Audio();
+    const audio = document.createElement("audio");
     // Keep a real media element alive for the lifetime of the page. Using a
     // normal network URL for playback (rather than swapping in blob: URLs
     // after an async cache lookup) keeps Firefox Android's media session tied
@@ -992,7 +1031,11 @@
     // below still starts the request immediately from the user gesture.
     audio.preload = isFirefoxAndroid() ? "none" : "metadata";
     audio.setAttribute("playsinline", "");
+    audio.setAttribute("aria-hidden", "true");
+    audio.tabIndex = -1;
+    audio.style.cssText = "position:fixed;width:1px;height:1px;left:-9999px;top:-9999px;opacity:0;pointer-events:none";
     audio.volume = musicVolumePct() / 100;
+    (document.body || document.documentElement).appendChild(audio);
     window._osuFavAudio = audio;
     audio._activeBtn = null;
     audio._activeBar = null;
@@ -1022,7 +1065,7 @@
     });
 
     function updateMediaSessionPositionState() {
-      if (!("mediaSession" in navigator)) return;
+      if (!hasMediaSession() || typeof navigator.mediaSession.setPositionState !== "function") return;
       if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
       try {
         navigator.mediaSession.setPositionState({
@@ -1038,47 +1081,50 @@
 
     // Firefox Android exposes this element through Android's media controls
     // when Media Session metadata/actions are supplied.
-    if ("mediaSession" in navigator) {
-      try {
-        navigator.mediaSession.setActionHandler("play", () => {
+    if (hasMediaSession() && typeof navigator.mediaSession.setActionHandler === "function") {
+      const actionHandlers = [
+        ["play", () => {
           audio.play().catch(() => {});
-        });
-        navigator.mediaSession.setActionHandler("pause", () => audio.pause());
-        navigator.mediaSession.setActionHandler("seekbackward", (details) => {
+        }],
+        ["pause", () => audio.pause()],
+        ["seekbackward", (details) => {
           const offset = Number.isFinite(details && details.seekOffset) ? details.seekOffset : 10;
           audio.currentTime = Math.max(0, audio.currentTime - offset);
-        });
-        navigator.mediaSession.setActionHandler("seekforward", (details) => {
+        }],
+        ["seekforward", (details) => {
           const offset = Number.isFinite(details && details.seekOffset) ? details.seekOffset : 10;
           const end = Number.isFinite(audio.duration) ? audio.duration : Infinity;
           audio.currentTime = Math.min(end, audio.currentTime + offset);
-        });
-        navigator.mediaSession.setActionHandler("seekto", (details) => {
+        }],
+        ["seekto", (details) => {
           if (!details || !Number.isFinite(details.seekTime)) return;
           audio.currentTime = Math.max(0, Math.min(
             Number.isFinite(audio.duration) ? audio.duration : Infinity,
             details.seekTime
           ));
-        });
-        navigator.mediaSession.setActionHandler("previoustrack", () => {
+        }],
+        ["previoustrack", () => {
           if (audio._queueAdvance) audio._queueAdvance(-1, {});
-        });
-        navigator.mediaSession.setActionHandler("nexttrack", () => {
+        }],
+        ["nexttrack", () => {
           if (audio._queueAdvance) audio._queueAdvance(1, {});
-        });
-      } catch (_) {
-        // Action handlers are optional; an unsupported action must not break
-        // the player on older Firefox Android releases.
-      }
+        }],
+      ];
+      actionHandlers.forEach(([action, handler]) => {
+        try {
+          navigator.mediaSession.setActionHandler(action, handler);
+        } catch (_) {}
+      });
     }
 
     audio.addEventListener("play", () => {
       if (audio._npPlayBtn) audio._npPlayBtn.innerHTML = pauseSVG();
-      if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
+      setMediaSessionMetadata(audio);
+      setMediaSessionPlaybackState("playing");
     });
     audio.addEventListener("pause", () => {
       if (audio._npPlayBtn) audio._npPlayBtn.innerHTML = playSVG();
-      if ("mediaSession" in navigator && !audio.ended) navigator.mediaSession.playbackState = "paused";
+      if (!audio.ended) setMediaSessionPlaybackState("paused");
     });
     audio.addEventListener("timeupdate", updateMediaSessionPositionState);
     audio.addEventListener("loadedmetadata", updateMediaSessionPositionState);
@@ -1091,18 +1137,7 @@
     // short fallback rather than a full track, treat it as "not on Hina"
     // and keep moving instead of playing the short clip.
     audio.addEventListener("loadedmetadata", () => {
-      if (!("mediaSession" in navigator)) return;
-      if (!audio._npCurrentId) return;
-      const fav = getFavorites()[audio._npCurrentId] || {};
-      const artwork = getPlaybackCover(fav, audio._npCurrentId);
-      try {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: audio._npCurrentTitle || "Unknown",
-          artist: audio._npCurrentArtist || "",
-          album: "osu! Local Favorites",
-          artwork: artwork ? [{ src: artwork }] : [],
-        });
-      } catch (_) {}
+      setMediaSessionMetadata(audio);
     });
 
     function fallbackToOfficialPreview(sourceAtEvent) {
@@ -1156,7 +1191,7 @@
     });
 
     audio.addEventListener("ended", () => {
-      if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "none";
+      clearMediaSession();
       if (musicLoopEnabled()) {
         audio.currentTime = 0;
         audio.play();
@@ -1217,7 +1252,7 @@
     audio._npCurrentTitle = "";
     audio._npCurrentArtist = "";
     audio._queueAdvance = null;
-    if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "none";
+    clearMediaSession();
   }
 
   // Builds the ordered list of download options for a beatmapset. Official
@@ -4188,17 +4223,8 @@
       audio._npCurrentArtist = f.artist || f.artist_unicode || "";
 
       const playbackCover = getPlaybackCover(f, id);
-      if ("mediaSession" in navigator) {
-        try {
-          navigator.mediaSession.metadata = new MediaMetadata({
-            title: audio._npCurrentTitle,
-            artist: audio._npCurrentArtist,
-            album: "osu! Local Favorites",
-            artwork: playbackCover ? [{ src: playbackCover }] : [],
-          });
-          navigator.mediaSession.playbackState = "none";
-        } catch (_) {}
-      }
+      setMediaSessionMetadata(audio);
+      setMediaSessionPlaybackState("none");
       if (audio._npThumb) {
         if (playbackCover) {
           audio._npThumb.src = playbackCover;
@@ -4262,7 +4288,7 @@
         playPromise.catch(() => {
           resetActiveCardUI(audio);
           if (audio._npBar) audio._npBar.style.display = "none";
-          if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "none";
+          clearMediaSession();
         });
       }
 
