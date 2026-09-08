@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.5.0
+// @version      5.5.1
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -4556,59 +4556,234 @@
       return wrap;
     }
 
-    // Color swatch that opens the native picker without letting it hang off
-    // the edge of the screen. The panel is docked flush against the right
-    // edge of the viewport, so a real <input type="color"> sitting in a
-    // settings row only has ~14px of clearance to its right — Chrome anchors
-    // the picker popup to the input's own position and doesn't reliably flip
-    // it back on screen, so the gradient/RGB fields end up clipped or
-    // unreachable. Instead we show a plain, purely decorative swatch box in
-    // the row (so the layout looks identical to before) and keep the real
-    // functional <input> invisible, teleporting it right next to the swatch
-    // just before it opens — offset to the side that actually has room, and
-    // clamped so its full footprint always stays on screen.
+    // ── Custom color picker ──
+    // We used to hand off to a real <input type="color">, but the
+    // saturation/value "plane" it opens is drawn by the browser's own
+    // chrome (not page content), so a userscript has zero access to it —
+    // on some Firefox/PC setups it drags very sluggishly and there is no
+    // code-side fix. Built our own instead: a plain-CSS gradient square
+    // for saturation/value, a gradient strip for hue, and a hex field.
+    // Dragging just repositions an absolutely-positioned cursor div — no
+    // canvas, no redraw loop, nothing outside our own DOM to be slow.
+
+    function hexToRgb(hex) {
+      hex = String(hex).replace("#", "");
+      if (hex.length === 3) hex = hex.split("").map((c) => c + c).join("");
+      const num = parseInt(hex, 16);
+      if (Number.isNaN(num)) return { r: 255, g: 102, b: 170 }; // falls back to the original #ff66aa-ish accent
+      return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+    }
+    function rgbToHex(r, g, b) {
+      const c = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
+      return `#${c(r)}${c(g)}${c(b)}`;
+    }
+    function rgbToHsv(r, g, b) {
+      r /= 255; g /= 255; b /= 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+      let h = 0;
+      if (d !== 0) {
+        if (max === r) h = ((g - b) / d) % 6;
+        else if (max === g) h = (b - r) / d + 2;
+        else h = (r - g) / d + 4;
+        h *= 60;
+        if (h < 0) h += 360;
+      }
+      return { h, s: max === 0 ? 0 : d / max, v: max };
+    }
+    function hsvToRgb(h, s, v) {
+      const c = v * s;
+      const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+      const m = v - c;
+      let r = 0, g = 0, b = 0;
+      if (h < 60) [r, g, b] = [c, x, 0];
+      else if (h < 120) [r, g, b] = [x, c, 0];
+      else if (h < 180) [r, g, b] = [0, c, x];
+      else if (h < 240) [r, g, b] = [0, x, c];
+      else if (h < 300) [r, g, b] = [x, 0, c];
+      else [r, g, b] = [c, 0, x];
+      return { r: (r + m) * 255, g: (g + m) * 255, b: (b + m) * 255 };
+    }
+
+    // rAF-throttled pointer drag: reads the latest pointer position but
+    // only applies it once per frame, so fast mouse/finger movement can't
+    // queue up more work than the display can actually show.
+    function attachColorDrag(el, onMove) {
+      let dragging = false, rafId = null, lastX = 0, lastY = 0;
+      function apply() {
+        rafId = null;
+        const rect = el.getBoundingClientRect();
+        onMove(lastX - rect.left, lastY - rect.top, rect.width, rect.height);
+      }
+      function point(e) {
+        lastX = e.clientX; lastY = e.clientY;
+        if (rafId == null) rafId = requestAnimationFrame(apply);
+      }
+      el.addEventListener("pointerdown", (e) => {
+        dragging = true;
+        el.setPointerCapture(e.pointerId);
+        point(e);
+        e.preventDefault();
+      });
+      el.addEventListener("pointermove", (e) => { if (dragging) point(e); });
+      const stop = () => { dragging = false; };
+      el.addEventListener("pointerup", stop);
+      el.addEventListener("pointercancel", stop);
+    }
+
+    // Tracks whichever custom color panel is currently open (across both
+    // the accent and heart-color swatches) so opening one closes the other
+    // instead of leaving two floating at once.
+    let _openColorPanelCleanup = null;
+
     function makeColorInput(initialHex, onChange) {
       const swatch = document.createElement("div");
       swatch.style.cssText =
         `width:40px;height:24px;border:1px solid #333;border-radius:3px;cursor:pointer;` +
         `background:${initialHex};flex-shrink:0`;
 
-      const input = document.createElement("input");
-      input.type = "color";
-      input.value = initialHex;
-      input.style.cssText =
-        "position:fixed;opacity:0;width:1px;height:1px;padding:0;border:0;pointer-events:none";
-      document.body.appendChild(input);
+      const rgb0 = hexToRgb(initialHex);
+      let hsv = rgbToHsv(rgb0.r, rgb0.g, rgb0.b);
+      let panel = null;
 
-      swatch.addEventListener("click", () => {
-        const w = 260, h = 300; // generous estimate of the native picker's footprint
+      function currentHex() {
+        const { r, g, b } = hsvToRgb(hsv.h, hsv.s, hsv.v);
+        return rgbToHex(r, g, b);
+      }
+
+      function openPanel() {
+        if (_openColorPanelCleanup) _openColorPanelCleanup();
+
+        panel = document.createElement("div");
+        panel.style.cssText =
+          "position:fixed;z-index:100002;width:200px;box-sizing:border-box;" +
+          "background:#1a1a1a;border:1px solid #333;border-radius:4px;" +
+          "box-shadow:0 4px 16px rgba(0,0,0,.5);padding:10px;" +
+          "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;" +
+          "display:flex;flex-direction:column;gap:8px";
+
+        const plane = document.createElement("div");
+        plane.style.cssText =
+          "position:relative;width:100%;height:130px;border-radius:3px;cursor:crosshair;touch-action:none";
+        const planeCursor = document.createElement("div");
+        planeCursor.style.cssText =
+          "position:absolute;width:12px;height:12px;border-radius:50%;" +
+          "border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.6);" +
+          "transform:translate(-50%,-50%);pointer-events:none";
+        plane.appendChild(planeCursor);
+
+        const hueBar = document.createElement("div");
+        hueBar.style.cssText =
+          "position:relative;width:100%;height:14px;border-radius:3px;cursor:pointer;touch-action:none;" +
+          "background:linear-gradient(to right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)";
+        const hueCursor = document.createElement("div");
+        hueCursor.style.cssText =
+          "position:absolute;top:-2px;bottom:-2px;width:4px;border-radius:2px;" +
+          "background:#fff;border:1px solid #000;box-shadow:0 0 2px rgba(0,0,0,.8);" +
+          "transform:translateX(-50%);pointer-events:none";
+        hueBar.appendChild(hueCursor);
+
+        const hexRow = document.createElement("div");
+        hexRow.style.cssText = "display:flex;gap:6px;align-items:center";
+        const preview = document.createElement("div");
+        preview.style.cssText =
+          "width:24px;height:24px;border:1px solid #333;border-radius:3px;flex-shrink:0";
+        const hexInput = document.createElement("input");
+        hexInput.type = "text";
+        hexInput.maxLength = 7;
+        hexInput.style.cssText =
+          "flex:1;min-width:0;box-sizing:border-box;background:#111;border:1px solid #333;" +
+          "border-radius:3px;color:#ddd;font-size:11px;font-family:inherit;padding:5px 6px";
+        hexRow.append(preview, hexInput);
+
+        panel.append(plane, hueBar, hexRow);
+        document.body.appendChild(panel);
+
+        function render() {
+          plane.style.background =
+            `linear-gradient(to top,#000,transparent),linear-gradient(to right,#fff,transparent),hsl(${hsv.h},100%,50%)`;
+          planeCursor.style.left = hsv.s * 100 + "%";
+          planeCursor.style.top = (1 - hsv.v) * 100 + "%";
+          hueCursor.style.left = (hsv.h / 360) * 100 + "%";
+          const hex = currentHex();
+          preview.style.background = hex;
+          swatch.style.background = hex;
+          if (document.activeElement !== hexInput) hexInput.value = hex;
+        }
+        render();
+
+        attachColorDrag(plane, (x, y, w, h) => {
+          hsv.s = Math.max(0, Math.min(1, x / w));
+          hsv.v = Math.max(0, Math.min(1, 1 - y / h));
+          render();
+          onChange(currentHex());
+        });
+        attachColorDrag(hueBar, (x, y, w) => {
+          hsv.h = Math.max(0, Math.min(360, (x / w) * 360));
+          render();
+          onChange(currentHex());
+        });
+
+        function commitHex() {
+          let v = hexInput.value.trim();
+          if (!/^#?[0-9a-f]{6}$/i.test(v)) { hexInput.value = currentHex(); return; }
+          if (v[0] !== "#") v = "#" + v;
+          const rgb = hexToRgb(v);
+          hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
+          render();
+          onChange(currentHex());
+        }
+        hexInput.addEventListener("change", commitHex);
+        hexInput.addEventListener("keydown", (e) => { if (e.key === "Enter") hexInput.blur(); });
+
+        // Same off-screen clamping the native-input version used: prefer
+        // opening to the left (the panel this lives in is docked to the
+        // right edge of the viewport), fall back to the right, clamp both.
+        const w = 220, h = 210;
         const rect = swatch.getBoundingClientRect();
-
-        // Prefer opening just to the left of the swatch — the panel is
-        // docked to the right edge, so that's almost always where the
-        // clearance is. Fall back to the right if there isn't enough room
-        // on the left, then clamp either way so it can't run off-screen.
         let left = rect.left - w - 8;
         if (left < 8) left = rect.right + 8;
         left = Math.max(8, Math.min(window.innerWidth - w - 8, left));
-
         const top = Math.max(8, Math.min(window.innerHeight - h - 8, rect.top));
+        panel.style.left = left + "px";
+        panel.style.top = top + "px";
 
-        input.style.left = left + "px";
-        input.style.top = top + "px";
-        input.click();
+        function cleanup() {
+          panel.remove();
+          panel = null;
+          if (_openColorPanelCleanup === cleanup) _openColorPanelCleanup = null;
+          document.removeEventListener("pointerdown", onOutsideDown, true);
+          document.removeEventListener("keydown", onKey, true);
+          window.removeEventListener("scroll", onWindowScroll, true);
+        }
+        function onOutsideDown(e) {
+          if (panel.contains(e.target) || e.target === swatch) return;
+          cleanup();
+        }
+        function onKey(e) { if (e.key === "Escape") cleanup(); }
+        function onWindowScroll(e) {
+          if (panel.contains(e.target)) return;
+          cleanup();
+        }
+        document.addEventListener("pointerdown", onOutsideDown, true);
+        document.addEventListener("keydown", onKey, true);
+        window.addEventListener("scroll", onWindowScroll, true);
+
+        panel._cleanup = cleanup;
+        _openColorPanelCleanup = cleanup;
+      }
+
+      swatch.addEventListener("click", () => {
+        if (panel) { panel._cleanup(); return; } // clicking again toggles it closed
+        openPanel();
       });
 
-      input.addEventListener("input", () => {
-        swatch.style.background = input.value;
-        onChange(input.value);
-      });
-
-      // The input lives on <body>, independent of the swatch's own position
-      // in the settings row — clean it up if the row is ever torn down
-      // (e.g. Settings re-rendered) so orphaned inputs don't pile up.
-      const cleanup = () => input.remove();
-      settingsView.addEventListener("osu-fav-settings-teardown", cleanup, { once: true });
+      // Clean up an open panel if the row is ever torn down (e.g. Settings
+      // re-rendered) so it doesn't linger detached from its swatch.
+      settingsView.addEventListener(
+        "osu-fav-settings-teardown",
+        () => { if (panel) panel._cleanup(); },
+        { once: true },
+      );
 
       return swatch;
     }
