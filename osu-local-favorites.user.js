@@ -747,11 +747,9 @@
   //
   // "never" skips the cache store entirely (identical to how this script
   // behaved before this feature existed - always straight to the network).
-  // Firefox Android also bypasses this cache's background XHR path; normal
-  // <img>/<audio> requests remain enabled, so mobile gets the browser's own
-  // connection/cache handling without dozens of Tampermonkey requests.
   // "always" caches with no expiry; entries only change if the URL itself
-  // does. Every other mode is a fixed, or user-typed custom, TTL.
+  // does. Every other mode is a fixed, or user-typed custom, TTL. Applies
+  // the same way on every platform, including Firefox Android.
   const CACHE_DURATION_KEY = "osu_cache_duration"; // "custom"|"30min"|"1h"|"6h"|"12h"|"24h"|"1week"|"1month"|"always"|"never"
   const CACHE_CUSTOM_MINUTES_KEY = "osu_cache_custom_minutes";
   const CACHE_DURATIONS_MIN = {
@@ -932,13 +930,11 @@
   // network URL unchanged - so a cache miss never delays first-time
   // playback/display waiting on a full download. A miss also kicks off a
   // background fetch to populate the cache for next time; fire-and-forget,
-  // not awaited by the caller either way. Firefox Android deliberately skips
-  // this background fetch entirely: GM_xmlhttpRequest can queue one large
-  // request per visible cover in Tampermonkey and make the first page load
-  // compete with osu!'s own resources on mobile.
+  // not awaited by the caller either way. This runs on Firefox Android too
+  // now - caching should behave the same across browsers/platforms.
   function resolveCachedMediaUrl(url) {
     if (!url) return Promise.resolve(url);
-    if (isFirefoxAndroid() || cacheDurationMode() === "never") return Promise.resolve(url);
+    if (cacheDurationMode() === "never") return Promise.resolve(url);
 
     return cacheGet(url).then((entry) => {
       const ttl = cacheDurationMs();
