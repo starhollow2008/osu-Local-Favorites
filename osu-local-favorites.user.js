@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.6.9
+// @version      5.6.10
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -5138,6 +5138,7 @@
           }
 
           const collections = getCollections();
+          const importedMapIds = new Set();
           const byName = new Map(
             Object.entries(collections).map(([id, col]) => [String((col && col.name) || "").trim().toLowerCase(), id]),
           );
@@ -5147,6 +5148,7 @@
             if (!source || typeof source !== "object" || Array.isArray(source)) continue;
             const name = String(source.name || "Untitled").trim() || "Untitled";
             const ids = Array.isArray(source.ids) ? [...new Set(source.ids.map(String).filter(Boolean))] : [];
+            ids.forEach((id) => importedMapIds.add(id));
             const nameKey = name.toLowerCase();
             const existingId = byName.get(nameKey);
             if (existingId && collections[existingId]) {
@@ -5169,10 +5171,42 @@
             byName.set(nameKey, id);
             added++;
           }
+          // Collections store only beatmapset IDs. Materialize any missing IDs in
+          // the local favorites library as lightweight placeholders, then queue
+          // them for the existing background enrichment system. This keeps the
+          // collection immediately usable while resolving title/artist/covers/
+          // tags/genre/language/etc. in the background without a request burst.
+          const favorites = getFavorites();
+          const idsToEnrich = [];
+          for (const id of importedMapIds) {
+            const existing = favorites[id];
+            if (!existing) {
+              favorites[id] = {
+                id,
+                url: "https://osu.ppy.sh/beatmapsets/" + id,
+                favourited_at: new Date().toISOString(),
+                metadata_enriched: false,
+              };
+              idsToEnrich.push(id);
+            } else if (!existing.metadata_enriched) {
+              idsToEnrich.push(id);
+            }
+          }
+          if (idsToEnrich.length) {
+            addManyToEnrichQueue(idsToEnrich);
+            setFavorites(favorites);
+            updateFloatingHeart();
+            scheduleAutoBackup();
+            ensureEnrichDrainerRunning();
+          }
+
           setCollections(collections);
           updateCollectionsBtn();
           renderList();
-          showToast(`Imported ${added} collection${added === 1 ? "" : "s"}${merged ? `; merged ${merged}` : ""}`);
+          showToast(
+            `Imported ${added} collection${added === 1 ? "" : "s"}${merged ? `; merged ${merged}` : ""}` +
+              (idsToEnrich.length ? `; resolving ${idsToEnrich.length} map${idsToEnrich.length === 1 ? "" : "s"} in background` : ""),
+          );
         } catch (err) {
           reportError("Import collections", err);
         }
