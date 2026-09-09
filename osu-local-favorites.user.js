@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.6.5
+// @version      5.6.6
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -4433,9 +4433,18 @@
         });
       }
 
+      // Keep this request's source so a late rejection from a failed mirror
+      // cannot tear down the UI after fallbackToOfficialPreview() has already
+      // replaced it with osu!'s working preview (e.g. Nightrunning (7_7
+      // Bootleg)).
+      const sourceAtPlayRequest = previewUrl;
       const playPromise = audio.play();
       if (playPromise && typeof playPromise.catch === "function") {
         playPromise.catch(() => {
+          // This play() belonged to a source that has since been replaced by
+          // the official fallback, or to a track the user has moved away from.
+          // Its rejection is stale and must not hide the active mini-player.
+          if (audio._npCurrentId !== id || audio._activePreviewUrl !== sourceAtPlayRequest) return;
           // Let the media error handler switch a failed mirror request to the
           // official preview before tearing down the player UI.
           if (audio._usingFullSongSource && !audio._sourceFallbackAttempted) return;
