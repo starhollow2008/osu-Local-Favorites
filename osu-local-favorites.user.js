@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.5.9
+// @version      5.6.0
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -2398,8 +2398,8 @@
         bpm: bm.bpm || 0,
         source: bm.source || "",
         tags: bm.tags || "",
-        genre: (bm.genre && bm.genre.name) || "",
-        language: (bm.language && bm.language.name) || "",
+        genre: typeof bm.genre === "string" ? bm.genre : ((bm.genre && bm.genre.name) || ""),
+        language: typeof bm.language === "string" ? bm.language : ((bm.language && bm.language.name) || ""),
         url: "https://osu.ppy.sh/beatmapsets/" + sid,
         favourited_at: new Date().toISOString(),
         is_artist_featured: !!bm.track_id,
@@ -2997,17 +2997,22 @@
           bpm: bm.bpm || 0,
           source: bm.source || "",
           tags: bm.tags || "",
-          genre: (bm.genre && bm.genre.name) || "",
-          language: (bm.language && bm.language.name) || "",
+          // API v2 returns objects here, while the normalized API helper and
+          // older page payloads may already provide plain strings.
+          genre: typeof bm.genre === "string" ? bm.genre : ((bm.genre && bm.genre.name) || ""),
+          language: typeof bm.language === "string" ? bm.language : ((bm.language && bm.language.name) || ""),
           url: "https://osu.ppy.sh/beatmapsets/" + sid,
           favourited_at: favs[sid].favourited_at || new Date().toISOString(),
           is_artist_featured: !!bm.track_id,
           nsfw: bm.nsfw || false,
           preview: "https://b.ppy.sh/preview/" + sid + ".mp3",
+          metadata_enriched: true,
         };
         setFavorites(favs);
         scheduleAutoBackup();
         removeFromEnrichQueue(sid);
+        const panel = document.getElementById("osu-local-fav-panel");
+        if (panel && typeof panel._refreshFavorites === "function") panel._refreshFavorites();
         return true;
       })
       .catch(() => false); // left in the queue — a later drain pass retries it
@@ -3043,7 +3048,10 @@
         setTimeout(drainNext, ENRICH_RATE_LIMIT_MS);
         return;
       }
-      const queue = getEnrichQueue().filter((qid) => getFavorites()[qid]); // drop no-longer-favorited IDs
+      const queue = getEnrichQueue().filter((qid) => {
+        const fav = getFavorites()[qid];
+        return fav && !fav.metadata_enriched;
+      }); // drop removed or already-enriched IDs
       if (!queue.length) {
         setEnrichQueue(queue);
         _enrichDrainerActive = false; // queue empty — stop until something re-queues it
@@ -5696,7 +5704,10 @@
         "differently-formatted version. Runs one map at a time to respect osu!'s rate limits.";
       wrap.appendChild(maintHint);
 
-      const queueLen = getEnrichQueue().length;
+      const currentFavorites = getFavorites();
+      const queueLen = getEnrichQueue().filter(
+        (id) => currentFavorites[id] && !currentFavorites[id].metadata_enriched,
+      ).length;
       if (queueLen > 0) {
         const queueNote = document.createElement("div");
         queueNote.style.cssText = "font-size:10px;color:var(--osu-fav-accent);line-height:1.5;margin-bottom:8px";
@@ -6325,6 +6336,11 @@
     document.body.appendChild(panel);
     updateSortBtns();
     renderList();
+    panel._refreshFavorites = () => {
+      updateFloatingHeart();
+      if (settingsOpen) renderSettingsView();
+      else renderList();
+    };
     updateFooterStatus();
         updateMobileSearchBar();
 
@@ -6921,7 +6937,7 @@
     osuApiHandleOAuthCallback();
 
     // One-time-per-favorite migration: back-fill the enrichment queue with
-    // any favorite that's missing genre data. Defer this potentially large
+    // any favorite that has not completed metadata enrichment. Defer this potentially large
     // scan and persist it with one batched GM write after the page gets a
     // chance to render. The old per-favorite loop serialized and persisted
     // the entire queue once per item, making first load scale badly in
@@ -6929,8 +6945,8 @@
     const migrateEnrichmentQueue = () => {
       try {
         const favs = getFavorites();
-        const favsNeedingGenre = Object.keys(favs).filter((id) => !favs[id].genre);
-        addManyToEnrichQueue(favsNeedingGenre);
+        const favsNeedingEnrichment = Object.keys(favs).filter((id) => !favs[id].metadata_enriched);
+        addManyToEnrichQueue(favsNeedingEnrichment);
         if (getEnrichQueue().length) ensureEnrichDrainerRunning();
       } catch (e) { /* never break page load over this */ }
     };
