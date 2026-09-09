@@ -15,6 +15,10 @@ Replaces the default "Favorite" button on [osu.ppy.sh](https://osu.ppy.sh) with 
 
 The script adds a **View Local Favorites** option in the Tampermonkey menu. Click it to open a side panel with all your favorites.
 
+### Firefox for Android media controls
+
+For a duration, seek timeline, and playback progress in Android's system media notification or lock screen, use **Firefox for Android 156 or newer**. Older Firefox Android releases expose track artwork and play/pause controls but do not pass a web page's Media Session position state through to Android, so the system player shows `00:00 — 00:00`. Mozilla enabled the timeline support in Firefox 156 ([bug 2063332](https://bugzilla.mozilla.org/show_bug.cgi?id=2063332)).
+
 Browser Extensions
 > **Heavily deprecated browser extension** 
 this is behind by about 2.0.3 major releases [122 commits behind check here](https://github.com/starhollow2008/osu-Local-Favorites/compare/v3.4.2...main)
