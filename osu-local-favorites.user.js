@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.5.6
+// @version      5.5.9
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -1222,7 +1222,16 @@
       audio.load();
       const retry = audio.play();
       if (retry && typeof retry.catch === "function") {
-        retry.catch(() => resetPlaybackAfterError(audio));
+        // The fallback can be selected from an asynchronous media error,
+        // outside the original tap's user-activation task. A rejected play()
+        // here does not mean the official preview failed; keep Now Playing
+        // visible so the user can resume it with the play control. A genuine
+        // media error on this fallback still reaches the error handler below.
+        retry.catch(() => {
+          if (audio._npBar && audio._npCurrentId) {
+            audio._npBar.style.display = settingsOpen ? "none" : "flex";
+          }
+        });
       }
       return true;
     }
@@ -4381,6 +4390,9 @@
       const playPromise = audio.play();
       if (playPromise && typeof playPromise.catch === "function") {
         playPromise.catch(() => {
+          // Let the media error handler switch a failed mirror request to the
+          // official preview before tearing down the player UI.
+          if (audio._usingFullSongSource && !audio._sourceFallbackAttempted) return;
           resetActiveCardUI(audio);
           if (audio._npBar) audio._npBar.style.display = "none";
           clearMediaSession();
@@ -4507,6 +4519,13 @@
       listEl.style.display = showSettings ? "none" : "block";
       settingsView.style.display = showSettings ? "block" : "none";
       searchInput.style.display = showSettings ? "none" : "block";
+      if (showSettings) {
+        // The search field belongs only to the favorites list. Collapse the
+        // header to its title row while Settings is open so it does not leave
+        // an empty search-sized gap above the controls.
+        header.style.height = "54px";
+        header.style.maxHeight = "54px";
+      }
       footer.style.display = showSettings ? "block" : "none";
       nowPlayingBar.style.display = !showSettings && npAudio.src && npAudio._npCurrentId ? "flex" : "none";
       bottomBar.setAttribute("data-view", showSettings ? "settings" : "favorites");
@@ -4521,6 +4540,7 @@
         // newly-created card instead of leaving stale detached DOM refs.
         renderList();
         requestAnimationFrame(syncCurrentCardUI);
+        updateMobileSearchBar();
       }
     }
 
@@ -5027,6 +5047,8 @@
       wrap.appendChild(divider());
 
       // ── osu! API v2 (OAuth) ──
+      const apiSectionStart = document.createComment("osu-api-section-start");
+      wrap.appendChild(apiSectionStart);
       wrap.appendChild(sectionLabel("osu! API"));
 
       const apiConnected = osuApiIsConnected();
@@ -5087,6 +5109,8 @@
       }
 
       wrap.appendChild(divider());
+      const apiSectionEnd = document.createComment("osu-api-section-end");
+      wrap.appendChild(apiSectionEnd);
 
       // ── GitHub Gist Backup ──
       wrap.appendChild(sectionLabel("GitHub Gist Backup"));
@@ -5677,7 +5701,7 @@
         const queueNote = document.createElement("div");
         queueNote.style.cssText = "font-size:10px;color:var(--osu-fav-accent);line-height:1.5;margin-bottom:8px";
         queueNote.textContent =
-          `${queueLen} map${queueLen === 1 ? "" : "s"} missing genre/tags/language — ` +
+          `${queueLen} map${queueLen === 1 ? "" : "s"} missing genre/tags/language - ` +
           "filling in automatically in the background as you browse (no need to run the button below for these).";
         wrap.appendChild(queueNote);
       }
@@ -5757,6 +5781,18 @@
           setView(false);
         }
       });
+
+      // Keep the osu! API controls at the top of Settings regardless of the
+      // order in which the remaining settings sections are assembled above.
+      const apiInsertBefore = wrap.firstChild;
+      let apiNode = apiSectionStart.nextSibling;
+      while (apiNode && apiNode !== apiSectionEnd) {
+        const next = apiNode.nextSibling;
+        wrap.insertBefore(apiNode, apiInsertBefore);
+        apiNode = next;
+      }
+      apiSectionStart.remove();
+      apiSectionEnd.remove();
     }
 
     // ── Render list ────────────────────────────────────────
@@ -6290,7 +6326,7 @@
     updateSortBtns();
     renderList();
     updateFooterStatus();
-    updateMobileSearchBar();
+        updateMobileSearchBar();
 
     // Automatic checks can be disabled in Settings. Manual checks remain
     // available from Settings and the userscript menu either way.
