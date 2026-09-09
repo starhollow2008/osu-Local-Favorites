@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.6.0
+// @version      5.6.1
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -1546,10 +1546,10 @@
 
     const favs = getFavorites();
     const { genreCounts, tagCounts } = collectGenreAndTagTerms(favs);
-    const genreList = Array.from(genreCounts.entries())
+    let genreList = Array.from(genreCounts.entries())
       .map(([key, v]) => ({ key, display: v.display, count: v.count }))
       .sort((a, b) => a.display.localeCompare(b.display));
-    const tagList = Array.from(tagCounts.entries())
+    let tagList = Array.from(tagCounts.entries())
       .map(([key, v]) => ({ key, display: v.display, count: v.count }))
       .sort((a, b) => b.count - a.count || a.display.localeCompare(b.display));
 
@@ -1690,6 +1690,16 @@
     }
     renderRows("");
     searchBox.addEventListener("input", () => renderRows(searchBox.value.trim()));
+    menu._refreshTerms = () => {
+      const latest = collectGenreAndTagTerms(getFavorites());
+      genreList = Array.from(latest.genreCounts.entries())
+        .map(([key, v]) => ({ key, display: v.display, count: v.count }))
+        .sort((a, b) => a.display.localeCompare(b.display));
+      tagList = Array.from(latest.tagCounts.entries())
+        .map(([key, v]) => ({ key, display: v.display, count: v.count }))
+        .sort((a, b) => b.count - a.count || a.display.localeCompare(b.display));
+      renderRows(searchBox.value.trim());
+    };
 
     if (genreList.length || tagList.length) {
       const divider = document.createElement("div");
@@ -3011,8 +3021,8 @@
         setFavorites(favs);
         scheduleAutoBackup();
         removeFromEnrichQueue(sid);
-        const panel = document.getElementById("osu-local-fav-panel");
-        if (panel && typeof panel._refreshFavorites === "function") panel._refreshFavorites();
+        const genreMenu = document.getElementById("osu-fav-genre-menu");
+        if (genreMenu && typeof genreMenu._refreshTerms === "function") genreMenu._refreshTerms();
         return true;
       })
       .catch(() => false); // left in the queue — a later drain pass retries it
@@ -6336,11 +6346,6 @@
     document.body.appendChild(panel);
     updateSortBtns();
     renderList();
-    panel._refreshFavorites = () => {
-      updateFloatingHeart();
-      if (settingsOpen) renderSettingsView();
-      else renderList();
-    };
     updateFooterStatus();
         updateMobileSearchBar();
 
