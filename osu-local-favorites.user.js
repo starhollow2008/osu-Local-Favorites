@@ -25,28 +25,28 @@
 /* === osu! Local Favorites ===
  *
  * Table of contents (search for the ═══ markers below):
- *   1. Page-world XHR/fetch interceptor  — blocks osu!'s own favourite calls
- *   2. Error reporting                   — console + on-page toast for failures
- *   3. Storage                           — local favourites CRUD (GM_*Value)
- *   4. Theme                             — accent color + opacity, as CSS vars
- *   5. Download Mirrors                  — 3rd-party download fallback + popover;
+ *   1. Page-world XHR/fetch interceptor  - blocks osu!'s own favourite calls
+ *   2. Error reporting                   - console + on-page toast for failures
+ *   3. Storage                           - local favourites CRUD (GM_*Value)
+ *   4. Theme                             - accent color + opacity, as CSS vars
+ *   5. Download Mirrors                  - 3rd-party download fallback + popover;
  *                                           also previews, playback settings, and the
  *                                           IndexedDB cover/preview cache
- *   6. GitHub Gist Backup                — connect, manual/auto sync, restore
- *   7. Beatmap data extraction           — parse JSON / DOM card into a record
- *   8. Favorite button detection         — find osu!'s heart buttons on page
- *   9. Visual helpers                    — heart icon fill/outline state
- *  10. Background enrichment             — fetch full detail-page JSON
- *  11. Global re-enrichment              — Settings → Library Maintenance
- *  12. Toggle favorite                   — the core add/remove action
- *  13. Copy-all button                   — bulk-import from a profile page's
+ *   6. GitHub Gist Backup                - connect, manual/auto sync, restore
+ *   7. Beatmap data extraction           - parse JSON / DOM card into a record
+ *   8. Favorite button detection         - find osu!'s heart buttons on page
+ *   9. Visual helpers                    - heart icon fill/outline state
+ *  10. Background enrichment             - fetch full detail-page JSON
+ *  11. Global re-enrichment              - Settings → Library Maintenance
+ *  12. Toggle favorite                   - the core add/remove action
+ *  13. Copy-all button                   - bulk-import from a profile page's
  *                                            Favourite/Most Played sections
- *  14. Floating heart indicator          — always-on-screen shortcut
- *  15. Favorites panel                   — the side panel UI + Settings view
- *  16. Guest-mode fallback button        — heart button on detail pages
- *  17. Guest downloads + mirror buttons    — download links when logged out
- *  18. Toast / version-check / update UI — misc helpers
- *  19. Init                              — observers, polling, menu commands
+ *  14. Floating heart indicator          - always-on-screen shortcut
+ *  15. Favorites panel                   - the side panel UI + Settings view
+ *  16. Guest-mode fallback button        - heart button on detail pages
+ *  17. Guest downloads + mirror buttons    - download links when logged out
+ *  18. Toast / version-check / update UI - misc helpers
+ *  19. Init                              - observers, polling, menu commands
  */
 (() => {
   "use strict";
@@ -57,7 +57,7 @@
   // Some userscript-manager environments (seen on certain mobile browsers)
   // only partially implement the GM_ API: GM_getValue/GM_setValue exist as
   // callable no-op stubs that log "GM_getValue is not supported" to the
-  // console instead of throwing — so a plain `typeof GM_getValue ===
+  // console instead of throwing - so a plain `typeof GM_getValue ===
   // "function"` check passes even though nothing is actually being
   // persisted, and every read comes back undefined regardless of the
   // default value passed in. That alone was enough to make favoriting
@@ -65,7 +65,7 @@
   // object). We do a real write-then-read round trip once at startup and,
   // if it doesn't survive, silently redirect all GM_getValue/GM_setValue
   // calls to localStorage instead. Every one of this script's ~60 existing
-  // call sites keeps calling GM_getValue/GM_setValue exactly as before —
+  // call sites keeps calling GM_getValue/GM_setValue exactly as before -
   // shadowing the names here at the top of the IIFE is enough to redirect
   // all of them, no need to touch each call site individually.
   const _nativeGM_getValue = typeof GM_getValue === "function" ? GM_getValue : null;
@@ -90,7 +90,7 @@
   }
 
   // In-memory write-through cache over the localStorage fallback.
-  // Without this, EVERY GM_getValue call re-serialized the entire store —
+  // Without this, EVERY GM_getValue call re-serialized the entire store -
   // with a large favorites library (500+) that meant multi-megabyte
   // JSON.parse calls hundreds of times per panel render, causing the
   // exponential slowdown / "Forced reflow" violations. Reads hit the cache;
@@ -131,13 +131,13 @@
     }
     const all = _lsCacheGet();
     all[key] = value;
-    // Persist the mutated object directly — no re-parse needed.
+    // Persist the mutated object directly - no re-parse needed.
     _lsWriteAll(all);
   }
 
   if (!_gmStorageWorks) {
     console.warn(
-      "[osu-local-favorites] this userscript manager's GM storage isn't working — falling back to localStorage",
+      "[osu-local-favorites] this userscript manager's GM storage isn't working - falling back to localStorage",
     );
   }
 
@@ -265,7 +265,7 @@
   let _lastErrorToastAt = 0;
 
   function showOsuFavErrorToast(msg) {
-    if (!document.body) return; // page not ready — the console line already has the detail
+    if (!document.body) return; // page not ready - the console line already has the detail
     const t = document.createElement("div");
     Object.assign(t.style, {
       position: "fixed",
@@ -295,7 +295,7 @@
 
   // context: short human label for where this happened, shown in both the
   // toast and the console line (e.g. "Gist backup", "Toggle favorite").
-  // err: whatever was thrown/rejected — normally an Error, handled
+  // err: whatever was thrown/rejected - normally an Error, handled
   // gracefully either way. extra: optional {status, statusText, ...} for
   // callers that know more than what's already on the Error object (most
   // network helpers below attach .status/.statusText themselves, so this is
@@ -310,7 +310,7 @@
     const statusPart = status ? ` (status ${status}${statusText ? " " + statusText : ""})` : "";
 
     console.error(
-      `[osu! Local Favorites] ${context} — ${name}: ${message}${statusPart}`,
+      `[osu! Local Favorites] ${context} - ${name}: ${message}${statusPart}`,
       Object.assign(
         { context, name, message, status, statusText, stack, time: new Date().toISOString() },
         extra,
@@ -320,13 +320,13 @@
     const now = Date.now();
     if (now - _lastErrorToastAt < ERROR_TOAST_MIN_GAP_MS) return; // already told the user something just failed
     _lastErrorToastAt = now;
-    showOsuFavErrorToast(`${context}: ${message}${statusPart} — see console for details`);
+    showOsuFavErrorToast(`${context}: ${message}${statusPart} - see console for details`);
   }
 
   // Last-resort safety net for bugs that slip past every try/catch above.
   // window-level "error"/"unhandledrejection" fire for *every* script on the
   // page, not just this one, so each listener below only reports when the
-  // stack trace contains one of this script's own function names — a
+  // stack trace contains one of this script's own function names - a
   // best-effort filter (Tampermonkey doesn't expose a reliable "this came
   // from a userscript" flag), but good enough to avoid popping a Local
   // Favorites error toast for osu!'s own unrelated page bugs.
@@ -355,7 +355,7 @@
   // heart button per pass via isFavorited), updateFloatingHeart(), and the
   // enrichment drainer re-filtering the queue against it every second. With a
   // large library that was several multi-megabyte JSON parses per second for
-  // the whole tab lifetime — constant CPU burn and GC churn bad enough to get
+  // the whole tab lifetime - constant CPU burn and GC churn bad enough to get
   // the renderer OOM-killed ("Aw, Snap!" / SIGILL) and the page stuck loading.
   // Every writer already goes through setFavorites(), so caching the last
   // value in memory and persisting only on write is coherent; the cross-tab
@@ -373,7 +373,7 @@
   }
 
   // Invalidate on cross-tab writes in the localStorage-fallback mode. (In
-  // native GM mode this event never fires for GM storage — init()'s
+  // native GM mode this event never fires for GM storage - init()'s
   // GM_addValueChangeListener handler covers that path instead.)
   window.addEventListener("storage", (e) => {
     if (!e.key || e.key === _GM_FALLBACK_LS_KEY) {
@@ -394,7 +394,7 @@
   // In-memory write-through cache, mirroring the favorites store above.
   // Every card row's "+ Playlist" badge calls collectionsContainingMap() 2-3
   // times during buildCard, and each of those used to deserialize the whole
-  // collections store out of GM storage — 1000+ reads for a single 500-card
+  // collections store out of GM storage - 1000+ reads for a single 500-card
   // render. All writers go through setCollections(), so caching is coherent;
   // cross-tab invalidation matches the favorites cache (storage event below +
   // GM_addValueChangeListener in init()).
@@ -458,7 +458,7 @@
   // Accent color and the idle/hover/active opacity levels used by the cover
   // preview button are all exposed as CSS custom properties on <html>, rather
   // than hardcoded throughout the UI. Settings → Appearance just updates these
-  // variables (and persists them) — every element that references
+  // variables (and persists them) - every element that references
   // var(--osu-fav-accent) etc. picks up the change immediately, with no need
   // to touch each individual style string.
   const THEME_ACCENT_KEY = "osu_theme_accent";
@@ -477,7 +477,7 @@
     activeOpacity: 0.8,
   };
 
-  // Simple hex darken for the accent's hover/pressed shade — mirrors the
+  // Simple hex darken for the accent's hover/pressed shade - mirrors the
   // original #ff66aa → #ff3377 relationship (roughly -25% lightness)
   function darkenHex(hex, amount = 0.25) {
     const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -499,7 +499,7 @@
   }
 
   // Applies the current theme settings to :root as CSS custom properties.
-  // Safe to call repeatedly (e.g. right after a Settings change) — it just
+  // Safe to call repeatedly (e.g. right after a Settings change) - it just
   // overwrites the same handful of variables.
   function applyTheme() {
     const t = getThemeSettings();
@@ -513,7 +513,7 @@
     root.setProperty("--osu-fav-active-opacity", t.activeOpacity);
   }
 
-  // Minimal heart glyph as real SVG (not emoji) — emoji hearts render from the
+  // Minimal heart glyph as real SVG (not emoji) - emoji hearts render from the
   // system emoji font with a fixed, non-CSS-colorable presentation, which is
   // exactly why they can't be recolored. This one uses fill/stroke, so
   // --osu-fav-heart-color actually takes effect.
@@ -525,7 +525,7 @@
       : `<svg width="${size}" height="${size}" viewBox="0 0 24 24"><path d="${HEART_PATH}" fill="none" stroke="var(--osu-fav-heart-color)" stroke-width="1.6"/></svg>`;
   }
 
-  // Play/pause icons as inline SVGs — the old U+25B6/U+23F8 text glyphs get
+  // Play/pause icons as inline SVGs - the old U+25B6/U+23F8 text glyphs get
   // emoji presentation on mobile (▶️ / colored ⏸), which broke sizing and
   // theming. SVGs render identically everywhere and inherit currentColor.
   function playSVG(size = 11) {
@@ -553,7 +553,7 @@
 
   // ═══ Download Mirrors ═══
   // Third-party beatmap mirrors, used as a fallback wherever osu!'s own
-  // download doesn't work — guests (osu!'s own download button/route is
+  // download doesn't work - guests (osu!'s own download button/route is
   // gated behind a real logged-in session), beatmaps with downloads disabled,
   // or just as an alternative when the official servers are slow. Modeled
   // after the mirror list in limjeck/osuplus.
@@ -602,7 +602,7 @@
 
   // Detects a real logged-in osu! session via the page's own current-user
   // JSON blob (empty object "{}" for guests, populated for a real session).
-  // Used to decide whether "Official Download" is worth offering at all —
+  // Used to decide whether "Official Download" is worth offering at all -
   // osu!'s download route requires server-side auth and simply doesn't work
   // for guests regardless of what our script does.
   //
@@ -631,7 +631,7 @@
   }
 
   // Which video variant to prefer, and whether Official or Mirrors should be
-  // listed first — both user-configurable in Settings → Download Mirrors.
+  // listed first - both user-configurable in Settings → Download Mirrors.
   // Nothing is ever hidden by these; they only decide ordering, so the full
   // set of options is always one click away in the dropdown.
   const DL_VIDEO_PREF_KEY = "osu_dl_video_pref"; // "video" | "novideo"
@@ -661,7 +661,7 @@
   }
 
   // Resolves the stored default-mirror key into an actual {label, url} for
-  // this beatmap, or null if it can't currently be used — either because
+  // this beatmap, or null if it can't currently be used - either because
   // the setting is unset, the chosen mirror has since been disabled, or
   // it's Official but the user isn't signed in. Returning null is the
   // signal to fall back to showing the normal dropdown, so this never
@@ -694,7 +694,7 @@
   // separate music-streaming API (distinct from its beatmap-download mirror)
   // that serves the full track from its own disk when it has one cached, and
   // otherwise transparently falls back to proxying the same ~30s official
-  // clip while it extracts the full song in the background — so pointing
+  // clip while it extracts the full song in the background - so pointing
   // the preview player at it is a strict upgrade, never a worse experience
   // than what we already show. No auth, open CORS, HTTP Range for seeking.
   const PREVIEW_FULLSONG_KEY = "osu_preview_fullsong";
@@ -898,7 +898,7 @@
     });
   }
   function cacheClearAll() {
-    // Revoke every blob URL handed out from the cache — otherwise clearing
+    // Revoke every blob URL handed out from the cache - otherwise clearing
     // the IndexedDB store still leaves those object URLs (and the Blobs
     // behind them) alive in memory until the tab closes, and any <img>/
     // <audio> still pointing at one would keep "working" despite the
@@ -942,7 +942,7 @@
   // rather than a page-context fetch(). osu!'s own CDN (assets.ppy.sh /
   // b.ppy.sh) doesn't send permissive Access-Control-Allow-Origin headers,
   // so a plain fetch() from here is blocked by the browser as a cross-origin
-  // network error before any bytes ever arrive — the image/audio still
+  // network error before any bytes ever arrive - the image/audio still
   // displays fine via <img>/<audio> (those aren't subject to CORS), but the
   // cache store silently never gets populated, which is exactly why caching
   // "worked" for nothing. GM_xmlhttpRequest runs outside the page's CORS
@@ -981,11 +981,11 @@
   // Reuses one blob: URL per cached source URL for the whole tab's
   // lifetime, instead of minting a fresh one every time resolveCachedMediaUrl
   // resolves the same cover/preview again (which happens on essentially
-  // every re-render — sorting, filtering, search, scroll-chunking all
+  // every re-render - sorting, filtering, search, scroll-chunking all
   // rebuild cards from scratch). Blob URLs are never garbage-collected just
-  // because the <img>/<audio> referencing them got removed from the DOM —
+  // because the <img>/<audio> referencing them got removed from the DOM -
   // only URL.revokeObjectURL() or a full page unload frees the underlying
-  // Blob — so without this, a long session doing a lot of re-rendering was
+  // Blob - so without this, a long session doing a lot of re-rendering was
   // steadily accumulating orphaned blob URLs (and, for full-length preview
   // audio, several-MB Blobs behind each one) that never got released.
   const _blobUrlCache = new Map(); // sourceUrl -> objectURL
@@ -1346,7 +1346,7 @@
 
   // Builds the ordered list of download options for a beatmapset. Official
   // download offers both a with-video and no-video (confirmed real
-  // ?noVideo=1 param) variant — previously this was hardcoded to
+  // ?noVideo=1 param) variant - previously this was hardcoded to
   // video-only. Guests always see mirrors first, since Official won't work
   // for them no matter what; logged-in users get their configured order.
   function buildDownloadOptions(id) {
@@ -1378,8 +1378,8 @@
   }
 
   // Shows a small popover of download options (official + enabled mirrors)
-  // anchored to the triggering element. Appended to <body> — not the
-  // scrollable panel list — so it's never clipped by overflow:auto. Closes
+  // anchored to the triggering element. Appended to <body> - not the
+  // scrollable panel list - so it's never clipped by overflow:auto. Closes
   // on outside click, Escape, or if any ancestor (e.g. the panel list)
   // scrolls out from under it.
   function showDownloadMenu(anchorEl, beatmapId) {
@@ -1412,7 +1412,7 @@
       if (e.key === "Escape") cleanup();
     }
     // Only close on a scroll that moves the menu's anchor out from under it
-    // (page/panel scroll) — a scroll *inside* the menu itself (e.g. the
+    // (page/panel scroll) - a scroll *inside* the menu itself (e.g. the
     // scrollable genre/tag or collections list) must not close it.
     function onWindowScroll(e) {
       if (menu.contains(e.target)) return;
@@ -1423,7 +1423,7 @@
     if (options.length === 0) {
       const empty = document.createElement("div");
       empty.style.cssText = "font-size:11px;color:#666;padding:8px 10px;line-height:1.4";
-      empty.textContent = "No download source available — enable a mirror in Settings.";
+      empty.textContent = "No download source available - enable a mirror in Settings.";
       menu.appendChild(empty);
     } else {
       options.forEach((opt) => {
@@ -1469,7 +1469,7 @@
 
   // ── Genre + Tags term collection ──
   // Builds two frequency-counted term lists from the current favorites:
-  // one from the `genre` field (osu!'s own taxonomy — a handful of values),
+  // one from the `genre` field (osu!'s own taxonomy - a handful of values),
   // one from the freeform `tags` field (can be large). Each favorite counts
   // once per unique term even if it shows up twice (e.g. a tag repeated).
   // Any tag string that collides with a genre value is dropped from the tag
@@ -1480,7 +1480,7 @@
   // variants down to their plain form (so e.g. a full-width "Ｋａｓａｉ" and
   // an ordinary "Kasai" collapse into one entry instead of two near-
   // duplicate rows), and stray leading/trailing punctuation is trimmed.
-  // Display text keeps the normalized form's original casing/script —
+  // Display text keeps the normalized form's original casing/script -
   // this only removes accidental duplicates, it doesn't translate or
   // otherwise rewrite non-Latin tags.
   const TAG_TRIM_PUNCT_RE = /^[\s"'.,;:!?()\[\]「」『』【】]+|[\s"'.,;:!?()\[\]「」『』【】]+$/g;
@@ -1518,7 +1518,7 @@
 
   // Whether a favorite matches a given genre/tag filter key (both compared
   // lowercase, tags run through the same NFKC-normalize + trim as the
-  // popover list) — true if it's that favorite's genre, or one of its tags.
+  // popover list) - true if it's that favorite's genre, or one of its tags.
   function favMatchesGenreTerm(f, key) {
     const genre = ((f.genre && f.genre.trim()) || "Unspecified").toLowerCase();
     if (genre === key) return true;
@@ -1535,7 +1535,7 @@
   // { [lowercaseTerm]: "include" | "exclude" }; onApply is called after every
   // tap with a fresh copy so the caller can re-render live without closing
   // the menu. Rows are split into a "Genres" section (osu!'s own taxonomy)
-  // and a "Tags" section (freeform, can be large — hence the search box).
+  // and a "Tags" section (freeform, can be large - hence the search box).
   function showGenreFilterMenu(anchorEl, currentState, onApply) {
     const existing = document.getElementById("osu-fav-genre-menu");
     const reopening = existing && existing._anchor === anchorEl;
@@ -1576,7 +1576,7 @@
       if (e.key === "Escape") cleanup();
     }
     // Only close on a scroll that moves the menu's anchor out from under it
-    // (page/panel scroll) — a scroll *inside* the menu itself (e.g. the
+    // (page/panel scroll) - a scroll *inside* the menu itself (e.g. the
     // scrollable genre/tag or collections list) must not close it.
     function onWindowScroll(e) {
       if (menu.contains(e.target)) return;
@@ -1589,7 +1589,7 @@
     hint.textContent = "Tap: include (green) → exclude (red) → off";
     menu.appendChild(hint);
 
-    // Tags can run into the hundreds for a big library — a live filter box
+    // Tags can run into the hundreds for a big library - a live filter box
     // keeps that usable instead of relying on scrolling alone.
     const searchBox = document.createElement("input");
     searchBox.type = "text";
@@ -1639,7 +1639,7 @@
       return row;
     }
 
-    // Tags can number in the hundreds/thousands for a big library — building
+    // Tags can number in the hundreds/thousands for a big library - building
     // a DOM row for every single one on open was the source of multi-second
     // "click handler" jank. Cap what's actually rendered; the live filter
     // box (with its own smaller cap) is how the rest get reached.
@@ -1654,7 +1654,7 @@
       const shownTags = filteredTagsAll.slice(0, cap);
       const hiddenCount = filteredTagsAll.length - shownTags.length;
 
-      // Build off-DOM, then attach once — avoids a forced layout per row.
+      // Build off-DOM, then attach once - avoids a forced layout per row.
       const frag = document.createDocumentFragment();
 
       if (filteredGenres.length === 0 && shownTags.length === 0) {
@@ -1680,7 +1680,7 @@
         if (hiddenCount > 0) {
           const note = document.createElement("div");
           note.style.cssText = "font-size:9px;color:#555;padding:5px 8px;line-height:1.4";
-          note.textContent = `+${hiddenCount} more tag${hiddenCount === 1 ? "" : "s"} — type to narrow`;
+          note.textContent = `+${hiddenCount} more tag${hiddenCount === 1 ? "" : "s"} - type to narrow`;
           frag.appendChild(note);
         }
       }
@@ -1769,7 +1769,7 @@
       if (e.key === "Escape") cleanup();
     }
     // Only close on a scroll that moves the menu's anchor out from under it
-    // (page/panel scroll) — a scroll *inside* the menu itself (e.g. the
+    // (page/panel scroll) - a scroll *inside* the menu itself (e.g. the
     // scrollable genre/tag or collections list) must not close it.
     function onWindowScroll(e) {
       if (menu.contains(e.target)) return;
@@ -1798,7 +1798,7 @@
       if (entries.length === 0) {
         const empty = document.createElement("div");
         empty.style.cssText = "font-size:11px;color:#666;padding:8px 10px;line-height:1.4";
-        empty.textContent = "No collections yet — create one below.";
+        empty.textContent = "No collections yet - create one below.";
         menu.appendChild(empty);
       }
 
@@ -1931,7 +1931,7 @@
       if (e.key === "Escape") cleanup();
     }
     // Only close on a scroll that moves the menu's anchor out from under it
-    // (page/panel scroll) — a scroll *inside* the menu itself (e.g. the
+    // (page/panel scroll) - a scroll *inside* the menu itself (e.g. the
     // scrollable genre/tag or collections list) must not close it.
     function onWindowScroll(e) {
       if (menu.contains(e.target)) return;
@@ -1947,7 +1947,7 @@
       if (entries.length === 0) {
         const empty = document.createElement("div");
         empty.style.cssText = "font-size:11px;color:#666;padding:8px 10px;line-height:1.4";
-        empty.textContent = "No collections yet — create one below.";
+        empty.textContent = "No collections yet - create one below.";
         menu.appendChild(empty);
       } else {
         entries.forEach(([id, col]) => {
@@ -2089,7 +2089,7 @@
     return ghApiRequest("GET", "/user", token);
   }
 
-  // Looks for a gist already containing our backup filename — lets a
+  // Looks for a gist already containing our backup filename - lets a
   // reconnect (new browser/device) pick up an existing backup instead of
   // silently creating a duplicate.
   function ghFindExistingGist(token) {
@@ -2149,7 +2149,7 @@
     return parts.length ? parts[parts.length - 1] : trimmed;
   }
 
-  // ═══ osu! API v2 — OAuth2 authorization-code flow ═══
+  // ═══ osu! API v2 - OAuth2 authorization-code flow ═══
   // Same mechanism standard osu! extensions use: the user creates an OAuth
   // application on their osu! account settings (new OAuth app), enters its
   // Client ID + Client Secret in LOF's settings, and registers exactly
@@ -2163,7 +2163,7 @@
   //   4. osuApiGetToken() transparently refreshes via refresh_token grant.
   //
   // All token traffic is same-origin (https://osu.ppy.sh → itself), so plain
-  // fetch() works — no GM_xmlhttpRequest / CORS involved.
+  // fetch() works - no GM_xmlhttpRequest / CORS involved.
 
   function osuApiIsConfigured() {
     return !!(GM_getValue(OSU_API_CLIENT_ID_KEY, "") && GM_getValue(OSU_API_CLIENT_SECRET_KEY, ""));
@@ -2233,7 +2233,7 @@
     const tok = GM_getValue(OSU_API_TOKEN_KEY, null);
     if (!tok) return Promise.reject(new Error("osu! API not connected"));
     if (tok.access && Date.now() < tok.expires_at) return Promise.resolve(tok.access);
-    if (!tok.refresh) return Promise.reject(new Error("osu! API session expired — reconnect in settings"));
+    if (!tok.refresh) return Promise.reject(new Error("osu! API session expired - reconnect in settings"));
     // Deduplicate concurrent refreshes
     if (!_osuApiRefreshInFlight) {
       _osuApiRefreshInFlight = osuApiTokenRequest({
@@ -2305,7 +2305,7 @@
             _osuApiRetryAfterUntil = Date.now() + (Number.isFinite(raHeader) && raHeader > 0 ? raHeader * 1000 : _osuApiBackoffMs);
             throw Object.assign(new Error("rate limited by osu! API"), { rateLimited: true });
           }
-          _osuApiBackoffMs = 0; // successful window — reset backoff
+          _osuApiBackoffMs = 0; // successful window - reset backoff
           if (r.status === 401 && !isRetry) {
             // Access token died early (revoked/password change): drop cached
             // token so the next osuApiGetToken() refreshes, then retry once.
@@ -2387,7 +2387,7 @@
   }
 
   // Fetches a beatmapset through the API v2 and normalizes it into LOF's
-  // stored-favorite shape (identical fields to getBeatmapDataFromJSON — the
+  // stored-favorite shape (identical fields to getBeatmapDataFromJSON - the
   // website's embedded JSON is basically the same object as the API payload).
   function osuApiFetchBeatmapset(beatmapId) {
     return osuApiGet("/beatmapsets/" + beatmapId).then((bm) => {
@@ -2454,7 +2454,7 @@
     });
   }
 
-  // Debounced auto-backup — call this after every favorites mutation.
+  // Debounced auto-backup - call this after every favorites mutation.
   // No-ops unless the user has connected GitHub and switched auto-update on.
   // Debouncing avoids hammering the API when several maps are favorited in
   // a row (e.g. the "Favorite all" bulk button).
@@ -2529,7 +2529,7 @@
 
       // ── Title ────────────────────────────────────────────────────
       // .beatmap-playcount__title (Most Played rows) is handled alongside
-      // the regular panel selectors — its text also carries a trailing
+      // the regular panel selectors - its text also carries a trailing
       // "[Difficulty]" and an inline "by Artist" span, both stripped below,
       // since we're favouriting the *set*, not one specific diff.
       let title = "";
@@ -2552,7 +2552,7 @@
 
       // ── Artist ───────────────────────────────────────────────────
       // Use dedicated semantic elements first; fall back to filtered info-row text.
-      // Never read raw info-row text without stripping stat nodes — doing so causes
+      // Never read raw info-row text without stripping stat nodes - doing so causes
       // play counts / fav counts / dates to bleed into the artist field.
       let artist = "";
       for (const sel of [
@@ -2560,7 +2560,7 @@
         '[class*="beatmapset-panel__artist"]',
         ".beatmapset-panel__info-row--artist",
         '[class*="info-row--artist"]',
-        ".beatmap-playcount__artist", // Most Played rows — text is "by Artist", stripped below
+        ".beatmap-playcount__artist", // Most Played rows - text is "by Artist", stripped below
       ]) {
         const el = card.querySelector(sel);
         if (el) {
@@ -2597,7 +2597,7 @@
         '[class*="beatmapset-panel__mapper"]',
         ".beatmapset-panel__info-row--mapper",
         '[class*="info-row--mapper"]',
-        ".beatmap-playcount__mapper-link", // Most Played rows — username only, no "mapped by " text to strip
+        ".beatmap-playcount__mapper-link", // Most Played rows - username only, no "mapped by " text to strip
       ]) {
         const el = card.querySelector(sel);
         if (el) {
@@ -2630,11 +2630,11 @@
         if (mapperLink) creator = mapperLink.textContent.trim();
       }
 
-      // source is not present in listing card DOM — leave blank rather than
+      // source is not present in listing card DOM - leave blank rather than
       // accidentally capturing stats / date text from info-row nodes
       const source = "";
 
-      // Extract cover URL — try multiple methods
+      // Extract cover URL - try multiple methods
       let coverUrl = "";
 
       // Method 1: computed style --bg custom property on cover element
@@ -2724,7 +2724,7 @@
     // Walk up from the button and find the smallest ancestor that contains
     // links to exactly one distinct beatmapset id. This works no matter how
     // deeply the beatmapset link is nested inside the card's markup (some
-    // layouts — e.g. the Featured Artist track grid — wrap it several levels
+    // layouts - e.g. the Featured Artist track grid - wrap it several levels
     // deep rather than as a direct child), and no matter which wrapper class
     // a given card layout uses, since we no longer depend on ".beatmapset-panel"
     // or a direct-child relationship at all. As soon as an ancestor's links
@@ -2770,7 +2770,7 @@
     ).toLowerCase();
     const text = (el.textContent || "").toLowerCase().trim();
 
-    // Reject download buttons immediately — never treat them as fav buttons
+    // Reject download buttons immediately - never treat them as fav buttons
     if (
       cls.includes("download") ||
       title.includes("download") ||
@@ -2835,7 +2835,7 @@
       }
     }
 
-    // title and text are already declared at top of function — reuse them
+    // title and text are already declared at top of function - reuse them
     if (title.includes("avourite") || title.includes("avorite")) return true;
 
     if (text.includes("avourite") || text.includes("avorite")) return true;
@@ -2895,19 +2895,19 @@
   }
 
   // ═══ Background enrichment ═══
-  // Shared pacing for any sequence of osu! beatmapset detail-page requests —
+  // Shared pacing for any sequence of osu! beatmapset detail-page requests -
   // keeps us comfortably under ~60 requests/min regardless of which feature
   // (bulk "Favorite all" import or a full-library re-enrichment) is driving it.
   const ENRICH_RATE_LIMIT_MS = 1000;
 
   // Persistent queue of beatmapset IDs still missing full metadata (genre/
-  // language/tags/source/etc.) — anything favorited from a listing card
+  // language/tags/source/etc.) - anything favorited from a listing card
   // instead of the beatmapset detail page starts here (see toggleFavorite/
   // "Favorite all" below) and is only removed once enrichBeatmapData()
   // actually succeeds for it.
   //
-  // This exists because the previous approach — fire off enrichBeatmapData()
-  // once right after favoriting and otherwise forget about it — quietly
+  // This exists because the previous approach - fire off enrichBeatmapData()
+  // once right after favoriting and otherwise forget about it - quietly
   // lost genre/language for a lot of favorites in practice: at the required
   // ~1 req/sec throttle, favoriting even a couple hundred maps in one
   // "Favorite all" run takes minutes to fully enrich, and closing the tab
@@ -2961,7 +2961,7 @@
   }
 
   // Fetches the beatmapset detail page and merges full JSON data into storage.
-  // Fire-and-forget — card data is stored instantly, this fills in the gaps.
+  // Fire-and-forget - card data is stored instantly, this fills in the gaps.
   // Also used standalone by the global re-enrichment feature to refresh
   // fields (tags/source/genre/language/etc.) that may be stale or were saved
   // in an older, differently-normalized format.
@@ -2997,7 +2997,7 @@
         const favs = getFavorites();
         const sid = String(bm.id);
         if (!favs[sid]) {
-          // Removed before enrichment finished — nothing to fill in, but it's
+          // Removed before enrichment finished - nothing to fill in, but it's
           // also not "still needing enrichment" anymore, so stop retrying it.
           removeFromEnrichQueue(sid);
           return false;
@@ -3035,7 +3035,7 @@
         if (genreMenu && typeof genreMenu._refreshTerms === "function") genreMenu._refreshTerms();
         return true;
       })
-      .catch(() => false); // left in the queue — a later drain pass retries it
+      .catch(() => false); // left in the queue - a later drain pass retries it
   }
 
   // Sequentially enriches a list of IDs with a delay between requests
@@ -3050,7 +3050,7 @@
 
   // Quietly works through the persistent enrichment queue (see
   // ENRICH_QUEUE_KEY above) in the background, one map per
-  // ENRICH_RATE_LIMIT_MS — same throttle as every other enrichment path,
+  // ENRICH_RATE_LIMIT_MS - same throttle as every other enrichment path,
   // just spread across however many page loads it takes instead of
   // requiring one tab to stay open until it's done. Safe to call any time;
   // it's a no-op while a manual "Re-enrich all maps" run is already going
@@ -3063,7 +3063,7 @@
 
     function drainNext() {
       if (_reenrichRunning) {
-        // Manual re-enrichment took over — back off and let it finish;
+        // Manual re-enrichment took over - back off and let it finish;
         // it removes IDs from this same queue as it goes.
         setTimeout(drainNext, ENRICH_RATE_LIMIT_MS);
         return;
@@ -3074,14 +3074,14 @@
       }); // drop removed or already-enriched IDs
       if (!queue.length) {
         setEnrichQueue(queue);
-        _enrichDrainerActive = false; // queue empty — stop until something re-queues it
+        _enrichDrainerActive = false; // queue empty - stop until something re-queues it
         return;
       }
       const id = queue[0];
       enrichBeatmapData(id).then((ok) => {
         if (!ok) {
           // Left in the queue by enrichBeatmapData on failure, but rotate it
-          // to the back rather than leaving it at the front — otherwise a
+          // to the back rather than leaving it at the front - otherwise a
           // single persistently-failing map (deleted beatmapset, transient
           // error, whatever) gets retried forever every cycle and every
           // *other* queued map behind it never gets a turn, which looked
@@ -3114,7 +3114,7 @@
 
   // Pushes current progress into the Settings panel's progress bar, if it's
   // currently mounted. Safe to call even when the panel/settings view isn't
-  // open — the elements simply won't be found and this becomes a no-op.
+  // open - the elements simply won't be found and this becomes a no-op.
   function updateReenrichmentUI(finished, cancelled) {
     const btn = document.getElementById("osu-fav-reenrich-btn");
     const progressWrap = document.getElementById("osu-fav-reenrich-progress");
@@ -3126,7 +3126,7 @@
     if (bar) bar.style.width = pct + "%";
     if (text) {
       if (cancelled) text.textContent = `Cancelled at ${pct}% (${_reenrichDone}/${_reenrichTotal})`;
-      else if (finished) text.textContent = `Done — refreshed ${_reenrichDone}/${_reenrichTotal} maps`;
+      else if (finished) text.textContent = `Done - refreshed ${_reenrichDone}/${_reenrichTotal} maps`;
       else text.textContent = `${pct}% (${_reenrichDone}/${_reenrichTotal})`;
     }
     if (btn) {
@@ -3186,7 +3186,7 @@
 
     if (wasFav) {
       delete favs[beatmapId];
-      removeFromEnrichQueue(beatmapId); // no longer favorited — stop trying to enrich it
+      removeFromEnrichQueue(beatmapId); // no longer favorited - stop trying to enrich it
     } else {
       const jsonData = getBeatmapDataFromJSON();
       if (jsonData) {
@@ -3212,7 +3212,7 @@
     }
     if (needsEnrich) {
       // Persisted first so this survives even if the immediate attempt
-      // below doesn't finish before the tab closes/navigates away — the
+      // below doesn't finish before the tab closes/navigates away - the
       // background drainer picks it back up later regardless.
       addToEnrichQueue(beatmapId);
       enrichBeatmapData(beatmapId);
@@ -3225,10 +3225,10 @@
   // Both live on a profile's Beatmaps tab and share the same "click show
   // more until it's gone" pagination pattern, but render completely
   // differently under the hood:
-  //   • Favourite (data-page-id="beatmaps") — one .beatmapset-panel card
+  //   • Favourite (data-page-id="beatmaps") - one .beatmapset-panel card
   //     per beatmapset, "show more" carries both the "profile-page" and
   //     "profile-page-beatmapsets" modifier classes.
-  //   • Most Played (data-page-id="historical") — one .beatmap-playcount
+  //   • Most Played (data-page-id="historical") - one .beatmap-playcount
   //     row per DIFFICULTY the user has played, so the same beatmapset can
   //     show up dozens of times; its "show more" only carries the plain
   //     "profile-page" modifier. getBeatmapDataFromCard() already knows how
@@ -3237,8 +3237,8 @@
   //     means a 20-diff mapset only ever gets added once.
   function addFavoriteAllButtons() {
     // The .js-sortable--page sections these buttons attach to only exist on
-    // profile pages. Everything below is four querySelector calls per call —
-    // and this runs on every debounced mutation pass and the 1.5s interval —
+    // profile pages. Everything below is four querySelector calls per call -
+    // and this runs on every debounced mutation pass and the 1.5s interval -
     // so bail before any DOM work on pages that can't possibly match.
     if (!/\/users\//.test(location.pathname)) return;
     addFavoriteAllButton({
@@ -3350,7 +3350,7 @@
             if (!data) return;
             if (favs[data.id]) {
               // Already favourited before, OR another diff of a set we
-              // already added earlier in *this* run — either way, skip it.
+              // already added earlier in *this* run - either way, skip it.
               alreadyHad++;
             } else {
               // Subtract i seconds so first row (top) gets newest timestamp
@@ -3374,13 +3374,13 @@
             ? " *[matching " + alreadyHad + "| " + alreadyHad + " not added]"
             : "";
           btn.textContent = "Added " + count + skippedLabel + ", enriching...";
-          // Persist the queue first — for a big batch, this run alone can
+          // Persist the queue first - for a big batch, this run alone can
           // take minutes at the required throttle, and closing the tab
           // partway through used to lose genre/language/tags permanently
           // for whatever hadn't been reached yet. Now the background
           // drainer just resumes where this left off on a later page load.
           addManyToEnrichQueue(newIds);
-          // Enrich each new beatmapset sequentially — respects ENRICH_RATE_LIMIT_MS
+          // Enrich each new beatmapset sequentially - respects ENRICH_RATE_LIMIT_MS
           // (1 request/sec), the same throttle every other bulk/re-enrich path uses.
           enrichBeatmapsSequential(newIds);
           setTimeout(() => {
@@ -3401,7 +3401,7 @@
     heading.appendChild(btn);
   }
 
-  // ═══ Floating heart — always visible on all osu! pages ═══
+  // ═══ Floating heart - always visible on all osu! pages ═══
   // Visual language matches the rest of LOF's UI (flat dark surface, 1px
   // hairline border, small radius, accent used sparingly) instead of the old
   // generic glowing-circle look.
@@ -3412,7 +3412,7 @@
     // every cross-tab sync; rebuilding the SVG innerHTML each time churned
     // the DOM (parse + node replacement + style invalidation) several times
     // per second even when the heart's state hadn't changed. Skip when the
-    // visual state is identical — the very first call still renders.
+    // visual state is identical - the very first call still renders.
     if (ind._lastFav === fav && ind._lastDragging === dragging) return;
     ind._lastFav = fav;
     ind._lastDragging = dragging;
@@ -3578,7 +3578,7 @@
       // Never treat clicks inside our own UI (the favorites panel or the
       // download-mirror popover) as a native-page favourite-button click.
       // isFavButton()'s matching is heuristic (title/class/icon-based) and
-      // meant for osu!'s own page elements — it previously misfired on our
+      // meant for osu!'s own page elements - it previously misfired on our
       // own "Download ▾" menu, e.g. the "Official Download (requires
       // sign-in)" row, which doesn't carry a "download" title/class, only
       // the word in its visible text. The panel and menu already handle
@@ -3592,10 +3592,10 @@
       if (!button || !isFavButton(button)) return;
 
       // As soon as we've identified this as a favorite button, we commit to
-      // handling the click ourselves — block osu!'s own click handler
+      // handling the click ourselves - block osu!'s own click handler
       // unconditionally, even if something below fails. Previously this only
       // happened after beatmap-id resolution succeeded, so a resolution
-      // failure would silently fall through to osu!'s real click handler —
+      // failure would silently fall through to osu!'s real click handler -
       // which our own XHR/fetch interceptor then turns into a broken fake
       // response, since it blindly fakes *any* request to a "/favourites"
       // URL regardless of whether we handled the click. Blocking here always
@@ -3636,12 +3636,12 @@
   function refreshButtons() {
     // Cheap short-circuit: isFavButton() only ever returns true for an
     // element on an actual beatmapset detail page or one sitting inside a
-    // ".beatmapset-panel" (listing/profile cards) — every other branch in it
+    // ".beatmapset-panel" (listing/profile cards) - every other branch in it
     // requires one of those two. On any other page (dashboard, forum, wiki,
     // chat, settings, etc.) that's guaranteed false for literally every
     // element, so skip straight past the expensive "every <button> on the
-    // whole page" scan below rather than running it — and the several
-    // querySelector/closest calls inside isFavButton() for each one — on
+    // whole page" scan below rather than running it - and the several
+    // querySelector/closest calls inside isFavButton() for each one - on
     // totally unrelated pages, every 1.5s and on every DOM mutation, for as
     // long as the tab stays open. This is a pure short-circuit: it changes
     // nothing about which buttons get matched, only skips the work when the
@@ -3656,22 +3656,22 @@
     );
     candidates.forEach((btn) => {
       // Cheapest checks first. The dataset flag must gate BEFORE isFavButton()
-      // — the old order ran the full heuristic (several querySelector calls
+      // - the old order ran the full heuristic (several querySelector calls
       // per candidate) on every already-processed button on every pass. And
       // everything inside our own UI is skipped outright: an open favorites
       // panel alone can hold thousands of <button>s (rows × Open/Download/
-      // Remove/preview), each of which would otherwise run isFavButton() —
-      // and always fail — on every debounced mutation pass and 1.5s interval
+      // Remove/preview), each of which would otherwise run isFavButton() -
+      // and always fail - on every debounced mutation pass and 1.5s interval
       // tick for as long as the panel stays open.
       if (btn.dataset.osuFavChecked) return;
       if (btn.closest("#osu-local-fav-panel, #osu-fav-dl-menu, #osu-local-fav-ind")) return;
       if (!isFavButton(btn)) return;
       const ctx = resolveBeatmapContext(btn);
-      // Context couldn't be resolved yet — this is common when a card is
+      // Context couldn't be resolved yet - this is common when a card is
       // still mid-render (fast scroll / infinite-load on search & profile
       // pages). Do NOT mark it checked here, or it'll be skipped forever and
       // silently show the wrong (unfavorited) heart state even though it's
-      // actually in local favorites — clicking it would then remove it
+      // actually in local favorites - clicking it would then remove it
       // instead of doing nothing. Leave it unmarked so the next pass (mutation
       // observer or periodic fallback) retries once the card has settled.
       if (!ctx.beatmapId) return;
@@ -3687,7 +3687,7 @@
   }
 
   // The audio element is deliberately page-lifetime. Closing the favorites panel
-  // must only detach the panel UI — never pause/reset the actual preview. This lets
+  // must only detach the panel UI - never pause/reset the actual preview. This lets
   // previews keep playing while the user closes the panel, switches tabs, or opens
   // another app on mobile. A newly opened panel re-binds its Now Playing controls.
   function clearFavoritesPanelAudio() {
@@ -3724,7 +3724,7 @@
       genreFilterState = {}, // { [genreName]: "include" | "exclude" }
       activeCollectionId = ""; // "" = no collection filter (show all)
 
-    // Inject shared styles once — covers scrollbar, slide-down banner, and slide-up prompt
+    // Inject shared styles once - covers scrollbar, slide-down banner, and slide-up prompt
     if (!document.getElementById("osu-fav-panel-style")) {
       const s = document.createElement("style");
       s.id = "osu-fav-panel-style";
@@ -3777,7 +3777,7 @@
       const dismissed = GM_getValue("osu_dismissed_version", "");
       if (dismissed === latestVersion) return;
 
-      // Backdrop — covers the panel content but not the header
+      // Backdrop - covers the panel content but not the header
       const backdrop = document.createElement("div");
       backdrop.id = "osu-fav-update-overlay";
       backdrop.style.cssText =
@@ -3799,7 +3799,7 @@
 
       const accentTitle = document.createElement("span");
       accentTitle.style.cssText = "font-size:12px;font-weight:700;color:#fff";
-      accentTitle.innerHTML = `Update available — <b>v${latestVersion}</b>`;
+      accentTitle.innerHTML = `Update available - <b>v${latestVersion}</b>`;
 
       const accentClose = document.createElement("button");
       accentClose.textContent = "✕";
@@ -3940,7 +3940,7 @@
     );
     // Debounced search: renderList() re-filters, re-sorts, and rebuilds the
     // whole visible list from scratch (chunked over rAF, but still). On a
-    // 500+ map library every keystroke used to pay that full price — typing
+    // 500+ map library every keystroke used to pay that full price - typing
     // a 10-character query ran it 10 times in quick succession. A 150ms
     // debounce keeps the live-filter feel while collapsing a typing burst
     // into one render.
@@ -4021,7 +4021,7 @@
       sortBtns[s] = btn;
     });
 
-    // Genre filter — 3-tap cycle per genre: neutral → include (green) →
+    // Genre filter - 3-tap cycle per genre: neutral → include (green) →
     // exclude (red) → neutral. Sits at the end of the Date/Title/Artist/Status
     // cluster on the left.
     const genreBtn = document.createElement("button");
@@ -4075,7 +4075,7 @@
 
     toolbar.appendChild(sortGroup);
 
-    // Collections selector — opposite side of the toolbar from the sort/genre
+    // Collections selector - opposite side of the toolbar from the sort/genre
     // cluster. Picks which collection (if any) the list is filtered to.
     const collectionsBtn = document.createElement("button");
     collectionsBtn.type = "button";
@@ -4134,7 +4134,7 @@
 
     contentArea.append(listEl, settingsView);
 
-    // ── Footer — sync status bar, doubles as a shortcut into Settings ──
+    // ── Footer - sync status bar, doubles as a shortcut into Settings ──
     const footer = document.createElement("div");
     footer.id = "osu-fav-footer-status";
     footer.style.cssText =
@@ -4161,7 +4161,7 @@
     }
     footer._refresh = updateFooterStatus;
 
-    // ── Now Playing bar — persistent mini-player ─────────────────
+    // ── Now Playing bar - persistent mini-player ─────────────────
     // This intentionally lives as a direct child of the fixed panel rather
     // than inside the scrolling content area. It therefore never moves with
     // the favorites/settings scroll position.
@@ -4173,7 +4173,7 @@
       "border-bottom:1px solid #222;background:#1a1a1a;flex:0 0 74px;overflow:hidden;" +
       "box-shadow:0 -3px 12px rgba(0,0,0,.35);margin-top:0;padding-bottom:7px";
 
-    // Album-art backdrop — subtle and blurred, so the bar visually inherits
+    // Album-art backdrop - subtle and blurred, so the bar visually inherits
     // the same artwork as the track without making the controls unreadable.
     const npBg = document.createElement("div");
     npBg.style.cssText =
@@ -4185,7 +4185,7 @@
     npBgShade.style.cssText =
       "position:absolute;inset:0;background:rgba(17,17,17,.64);pointer-events:none;z-index:1";
 
-    // Track thumbnail — this is deliberately a normal img rather than a
+    // Track thumbnail - this is deliberately a normal img rather than a
     // background-only image, so the current cover remains identifiable.
     const npThumb = document.createElement("img");
     npThumb.alt = "";
@@ -4639,7 +4639,7 @@
       return row;
     }
 
-    // Pink pill switch — matches the accent color used throughout the panel
+    // Pink pill switch - matches the accent color used throughout the panel
     function makeToggleSwitch(initialOn, onChange) {
       const wrap = document.createElement("button");
       wrap.type = "button";
@@ -4658,7 +4658,7 @@
       return wrap;
     }
 
-    // Two/three-way segmented control — mirrors the sort-button pill style
+    // Two/three-way segmented control - mirrors the sort-button pill style
     function makeSegmented(options, initial, onChange) {
       const wrap = document.createElement("div");
       wrap.style.cssText =
@@ -4684,7 +4684,7 @@
       return wrap;
     }
 
-    // Native <select> for settings with many choices — segmented pills work
+    // Native <select> for settings with many choices - segmented pills work
     // well for 2-3 options, but a real dropdown scales better once there
     // are this many (every mirror × video variant, plus both Official
     // variants, plus "not set").
@@ -4704,7 +4704,7 @@
       return select;
     }
 
-    // 0–100 percentage slider with a live-updating label — used by Appearance
+    // 0–100 percentage slider with a live-updating label - used by Appearance
     function makeSlider(initialPct, onChange) {
       const wrap = document.createElement("div");
       wrap.style.cssText = "display:flex;align-items:center;gap:8px;flex-shrink:0;width:130px";
@@ -4728,11 +4728,11 @@
     // ── Custom color picker ──
     // We used to hand off to a real <input type="color">, but the
     // saturation/value "plane" it opens is drawn by the browser's own
-    // chrome (not page content), so a userscript has zero access to it —
+    // chrome (not page content), so a userscript has zero access to it -
     // on some Firefox/PC setups it drags very sluggishly and there is no
     // code-side fix. Built our own instead: a plain-CSS gradient square
     // for saturation/value, a gradient strip for hue, and a hex field.
-    // Dragging just repositions an absolutely-positioned cursor div — no
+    // Dragging just repositions an absolutely-positioned cursor div - no
     // canvas, no redraw loop, nothing outside our own DOM to be slow.
 
     function hexToRgb(hex) {
@@ -4966,7 +4966,7 @@
       const wrap = document.createElement("div");
       wrap.style.cssText = "padding:0 14px 20px";
       // Attach immediately (while still empty) rather than at the end of this
-      // function — some sub-sections (e.g. Library Maintenance) sync their
+      // function - some sub-sections (e.g. Library Maintenance) sync their
       // initial state via document.getElementById, which only finds nodes
       // that are actually part of the live document tree.
       settingsView.appendChild(wrap);
@@ -5053,7 +5053,7 @@
         checkVersionUpdate(true)
           .then((latest) => {
             if (latest) {
-              showToast("Update available: v" + latest + " — reinstall from the repo to update");
+              showToast("Update available: v" + latest + " - reinstall from the repo to update");
               // Offer a one-click jump to the install URL
               setTimeout(() => {
                 window.open(
@@ -5065,7 +5065,7 @@
               showToast("You're on the latest version (v" + getCurrentVersion() + ")");
             }
           })
-          .catch(() => showToast("Update check failed — try again later"))
+          .catch(() => showToast("Update check failed - try again later"))
           .then(() => {
             checkUpdateBtn.textContent = "Check for update";
             checkUpdateBtn.disabled = false;
@@ -5091,7 +5091,7 @@
       } else {
         const apiStatus = document.createElement("div");
         apiStatus.style.cssText = "font-size:11px;color:#8c8;margin-bottom:6px";
-        apiStatus.textContent = "✔ Connected" + (GM_getValue(OSU_API_USERNAME_KEY, "") ? " as " + GM_getValue(OSU_API_USERNAME_KEY, "") : "") + " — enrichment uses the API";
+        apiStatus.textContent = "✔ Connected" + (GM_getValue(OSU_API_USERNAME_KEY, "") ? " as " + GM_getValue(OSU_API_USERNAME_KEY, "") : "") + " - enrichment uses the API";
         wrap.appendChild(apiStatus);
       }
 
@@ -5182,7 +5182,7 @@
                 if (found) {
                   GM_setValue(GH_GIST_ID_KEY, found.id);
                   GM_setValue(GH_GIST_URL_KEY, found.html_url || "");
-                  showToast("Connected — linked existing backup gist");
+                  showToast("Connected - linked existing backup gist");
                 } else {
                   showToast("Connected as " + user.login);
                 }
@@ -5215,7 +5215,7 @@
         const fetchHint = document.createElement("div");
         fetchHint.style.cssText = "font-size:10px;color:#666;margin-top:4px;line-height:1.4";
         fetchHint.textContent =
-          "Pull from any gist — your own or someone else's shared list — without " +
+          "Pull from any gist - your own or someone else's shared list - without " +
           "changing what Backup now targets. Handy on a new device before your first backup.";
         wrap.appendChild(fetchHint);
 
@@ -5245,7 +5245,7 @@
               updateFloatingHeart();
               renderList();
               fetchInput.value = "";
-              showToast(`Fetched — added ${added} maps`);
+              showToast(`Fetched - added ${added} maps`);
             })
             .catch((err) => reportError("Gist fetch", err))
             .then(() => {
@@ -5298,7 +5298,7 @@
             if (existingGistId) {
               GM_setValue(GH_GIST_ID_KEY, "");
               GM_setValue(GH_GIST_URL_KEY, "");
-              showToast("Visibility changed — a new gist will be created on next backup");
+              showToast("Visibility changed - a new gist will be created on next backup");
               renderSettingsView();
             }
           },
@@ -5335,7 +5335,7 @@
         restoreBtn.addEventListener("click", () => {
           const gistId = GM_getValue(GH_GIST_ID_KEY, "");
           if (!gistId) {
-            showToast("No backup gist linked yet — run a backup first");
+            showToast("No backup gist linked yet - run a backup first");
             return;
           }
           restoreBtn.textContent = "Restoring...";
@@ -5381,7 +5381,7 @@
         const fetchHint = document.createElement("div");
         fetchHint.style.cssText = "font-size:10px;color:#666;margin-top:4px;line-height:1.4";
         fetchHint.textContent =
-          "Pull from any gist — your own or someone else's shared list — without " +
+          "Pull from any gist - your own or someone else's shared list - without " +
           "changing what Backup now targets. Handy on a new device before your first backup.";
         wrap.appendChild(fetchHint);
 
@@ -5411,7 +5411,7 @@
               scheduleAutoBackup();
               renderList();
               fetchInput.value = "";
-              showToast(`Fetched — added ${added} maps`);
+              showToast(`Fetched - added ${added} maps`);
             })
             .catch((err) => reportError("Gist fetch", err))
             .then(() => {
@@ -5450,7 +5450,7 @@
       mirrorHint.style.cssText = "font-size:10px;color:#666;line-height:1.5;margin-bottom:4px";
       mirrorHint.textContent =
         "osu!'s own download requires being signed in, and some maps have downloads " +
-        "disabled entirely. Enable mirrors below to download anyway — they're offered " +
+        "disabled entirely. Enable mirrors below to download anyway - they're offered " +
         "on the Download button in this panel and injected on beatmap pages.";
       wrap.appendChild(mirrorHint);
       MIRRORS.forEach((mirror) => {
@@ -5461,7 +5461,7 @@
       });
 
       const defaultMirrorControl = makeDropdown(
-        [{ value: "", label: "Not set — show options" }, ...getAllDownloadDestinations().map((d) => ({ value: d.key, label: d.label }))],
+        [{ value: "", label: "Not set - show options" }, ...getAllDownloadDestinations().map((d) => ({ value: d.key, label: d.label }))],
         GM_getValue(DL_DEFAULT_MIRROR_KEY, ""),
         (val) => GM_setValue(DL_DEFAULT_MIRROR_KEY, val),
       );
@@ -5482,7 +5482,7 @@
         (val) => GM_setValue(DL_VIDEO_PREF_KEY, val),
       );
       wrap.appendChild(
-        settingsRow("Preferred video option", videoPrefControl, "Only reorders — every option stays available in the dropdown"),
+        settingsRow("Preferred video option", videoPrefControl, "Only reorders - every option stays available in the dropdown"),
       );
 
       const sourcePrefControl = makeSegmented(
@@ -5494,7 +5494,7 @@
         (val) => GM_setValue(DL_SOURCE_PREF_KEY, val),
       );
       wrap.appendChild(
-        settingsRow("Preferred source order", sourcePrefControl, "Guests always see mirrors first — Official won't work without signing in"),
+        settingsRow("Preferred source order", sourcePrefControl, "Guests always see mirrors first - Official won't work without signing in"),
       );
 
       wrap.appendChild(divider());
@@ -5548,7 +5548,7 @@
         const pct = Math.round(frac * 100);
         GM_setValue(MUSIC_VOLUME_KEY, pct);
         // Applied immediately to whatever's already playing, not just future
-        // playback — the audio element is a tab-lifetime singleton, so
+        // playback - the audio element is a tab-lifetime singleton, so
         // without this the change wouldn't take effect until the next track.
         if (window._osuFavAudio) window._osuFavAudio.volume = frac;
       });
@@ -5654,7 +5654,7 @@
         settingsRow(
           "Heart fill color",
           heartColorSwatch,
-          "Independent of accent — keeps our heart distinct from osu!'s own",
+          "Independent of accent - keeps our heart distinct from osu!'s own",
         ),
       );
 
@@ -5674,7 +5674,7 @@
             GM_setValue(THEME_IDLE_DIM_KEY, v);
             applyTheme();
           }),
-          "Baseline darkening on cover art before you hover — 0 leaves it untouched",
+          "Baseline darkening on cover art before you hover - 0 leaves it untouched",
         ),
       );
       wrap.appendChild(
@@ -5719,7 +5719,7 @@
       const maintHint = document.createElement("div");
       maintHint.style.cssText = "font-size:10px;color:#666;line-height:1.5;margin-bottom:8px";
       maintHint.textContent =
-        "Re-fetches full metadata — tags, source, genre, language, BPM, status, cover — " +
+        "Re-fetches full metadata - tags, source, genre, language, BPM, status, cover - " +
         "for every favorited map. Useful if fields look stale or were saved in an older, " +
         "differently-formatted version. Runs one map at a time to respect osu!'s rate limits.";
       wrap.appendChild(maintHint);
@@ -5847,7 +5847,7 @@
         );
       }
 
-      // Genre/tag filter — terms are stored as lowercase keys (see
+      // Genre/tag filter - terms are stored as lowercase keys (see
       // showGenreFilterMenu). Multiple "include" terms are OR'd together;
       // any "exclude" term always drops the entry, even if it also matched
       // an include. A term matches either the favorite's genre or any one
@@ -5939,7 +5939,7 @@
       }
 
 
-      // Card BUILDER — rows are constructed lazily, one chunk per animation
+      // Card BUILDER - rows are constructed lazily, one chunk per animation
       // frame (see renderChunk below), so opening the panel with 500+ favorites
       // doesn't build ~15k DOM nodes inside the click handler.
       const buildCard = ([id, f]) => {
@@ -5965,7 +5965,7 @@
           "position:relative;width:56px;height:42px;border-radius:2px;overflow:hidden;flex-shrink:0;background:#1a1a1a;display:flex;align-items:center;justify-content:center;cursor:pointer";
         if (coverUrl) {
           const img = document.createElement("img");
-          // Don't set src yet — the IntersectionObserver will do it when the row
+          // Don't set src yet - the IntersectionObserver will do it when the row
           // scrolls within 100px of the list viewport
           img.dataset.src = coverUrl;
           img.style.cssText = "width:100%;height:100%;object-fit:cover;display:block";
@@ -5984,7 +5984,7 @@
           coverEl.textContent = "?";
         }
 
-        // Dim overlay — sits at --osu-fav-idle-dim normally (0 by default,
+        // Dim overlay - sits at --osu-fav-idle-dim normally (0 by default,
         // i.e. invisible) and brightens to --osu-fav-hover-dim on hover/while playing
         const dimOverlay = document.createElement("div");
         dimOverlay.className = "osu-fav-dim-overlay";
@@ -6054,7 +6054,7 @@
           "font-size:9px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
         dateDiv.textContent = formatDate(f.favourited_at);
 
-        // Add-to-collection dropdown — sits right next to the date-added text.
+        // Add-to-collection dropdown - sits right next to the date-added text.
         // Shows a checkmark + count once the map is in at least one collection.
         const collCount = () => collectionsContainingMap(id).length;
         const addToCollBtn = document.createElement("button");
@@ -6063,7 +6063,7 @@
           const n = collCount();
           addToCollBtn.textContent = n ? `\u2713 ${n}` : "+ Playlist";
           addToCollBtn.title = n
-            ? `In ${n} collection${n > 1 ? "s" : ""} — click to manage`
+            ? `In ${n} collection${n > 1 ? "s" : ""} - click to manage`
             : "Add to a collection";
           addToCollBtn.style.borderColor = n ? "var(--osu-fav-accent)" : "#333";
           addToCollBtn.style.color = n ? "var(--osu-fav-accent)" : "#666";
@@ -6077,7 +6077,7 @@
           showAddToCollectionMenu(addToCollBtn, id, () => {
             refreshAddToCollBtn();
             addToCollBtn.style.borderColor = collCount() ? "var(--osu-fav-accent)" : "#333";
-            // Membership changed — if a collection filter is active, this
+            // Membership changed - if a collection filter is active, this
             // card may need to appear/disappear from the visible list.
             if (activeCollectionId) renderList();
           });
@@ -6120,13 +6120,13 @@
         // and it's actually usable right now (mirror still enabled, or
         // Official while actually signed in), skip the dropdown entirely
         // and go straight to a real download link. Otherwise fall back to
-        // the normal "Download ▾" trigger — resolveDefaultMirror() already
+        // the normal "Download ▾" trigger - resolveDefaultMirror() already
         // returns null for anything that wouldn't work, so this never
         // hands out a dead link.
         //
         // Separately: even with no default set, buildDownloadOptions() can
         // still only have exactly one entry (e.g. a signed-out guest with
-        // every mirror disabled — Official is the only option, "requires
+        // every mirror disabled - Official is the only option, "requires
         // sign-in" and all). A "▾" dropdown that opens to one single row is
         // just a pointless extra click, so that case also collapses to a
         // plain link, same as the default-mirror path.
@@ -6149,7 +6149,7 @@
           downloadLink.rel = "noopener";
           downloadLink.textContent = "Download";
           downloadLink.title = defaultMirror
-            ? `Download via ${target.label} — change default in Settings`
+            ? `Download via ${target.label} - change default in Settings`
             : `Download via ${target.label}`;
         } else {
           downloadLink = document.createElement("button");
@@ -6197,7 +6197,7 @@
 
         const previewUrl = previewSourceUrl(id, f.preview || `https://b.ppy.sh/preview/${id}.mp3`);
 
-        // Play button — lives inside the cover, centred, shown on hover or while playing
+        // Play button - lives inside the cover, centred, shown on hover or while playing
         const previewBtn = document.createElement("button");
         previewBtn.className = "osu-fav-preview-btn";
         previewBtn.innerHTML = playSVG();
@@ -6240,7 +6240,7 @@
               dimOverlay.style.background = "rgba(51,51,51,var(--osu-fav-idle-dim, 0))";
             } else {
               // Re-link the bar/dim to this card every time we (re)start
-              // playback, not just on a genuinely new src — if the previous
+              // playback, not just on a genuinely new src - if the previous
               // play ran to completion, the "ended" handler already cleared
               // audio._activeBar/_activeDim and hid the progress wrap, so a
               // plain audio.play() here would resume sound with nothing
@@ -6270,11 +6270,11 @@
         return card;
       };
 
-      // Chunked build+append — mounting 500+ rows in one synchronous pass
+      // Chunked build+append - mounting 500+ rows in one synchronous pass
       // blocked the click handler for seconds and forced full-layout reflows.
       // Smaller chunks keep each frame comfortably under the ~50ms budget
       // Chrome flags as janky, at the cost of slightly more frames to finish
-      // mounting a very long list — imperceptible either way while scrolled
+      // mounting a very long list - imperceptible either way while scrolled
       // near the top, and it's non-blocking regardless.
       const CHUNK_SIZE = 25;
       const renderToken = renderList._token; // set at top of this function
@@ -6374,7 +6374,7 @@
   }
 
   // ═══ Menu commands ═══
-  // These run at top-level, before init() — an unguarded throw here (rather
+  // These run at top-level, before init() - an unguarded throw here (rather
   // than the graceful no-op-stub behavior GM_getValue/GM_setValue fall back
   // to in some environments) would silently prevent everything below,
   // including init() itself, from ever running.
@@ -6405,7 +6405,7 @@
       });
     } else {
       console.warn(
-        "[osu-local-favorites] GM_registerMenuCommand not supported by this userscript manager — menu commands disabled",
+        "[osu-local-favorites] GM_registerMenuCommand not supported by this userscript manager - menu commands disabled",
       );
     }
   } catch (e) {
@@ -6426,7 +6426,7 @@
     if (!bmid) return;
 
     // If the native osu! favourite button already exists on the page (user is logged in),
-    // we don't need to inject our guest fallback — our click interceptor handles the native
+    // we don't need to inject our guest fallback - our click interceptor handles the native
     // button. Osu!'s own class/title FLIPS once a beatmapset is already favourited
     // (…-square-favourite/"favourite this beatmap" → …-square-unfavourite/"unfavourite
     // this beatmap"), so both states must be checked or an already-favourited map's native
@@ -6457,7 +6457,7 @@
     const fav = isFavorited(bmid);
 
     // Build the button using the exact same class and inner-HTML structure as osu!'s
-    // native favourite button — so it sits flush with the download buttons and uses
+    // native favourite button - so it sits flush with the download buttons and uses
     // the page's own CSS for sizing, colours, and hover effects.
     const btn = document.createElement("button");
     btn.id = "osu-local-guest-fav-btn";
@@ -6521,7 +6521,7 @@
     // Replace disabled <span class="beatmapset-panel__menu-item"> download spans
     // with real <a> links that match the logged-in element exactly.
     document.querySelectorAll("span.beatmapset-panel__menu-item").forEach((span) => {
-      // Already converted — skip
+      // Already converted - skip
       if (span.dataset.osuDlFixed) return;
 
       const hasDownloadIcon = span.querySelector(".fa-file-download, .fa-download");
@@ -6540,7 +6540,7 @@
 
       const ctx = resolveBeatmapContext(span);
       if (!ctx.beatmapId) {
-        // Context not resolvable yet (card still mid-render) — leave unmarked
+        // Context not resolvable yet (card still mid-render) - leave unmarked
         // so the next pass retries instead of skipping this element forever.
         return;
       }
@@ -6583,7 +6583,7 @@
 
     if (!signInBtn) return;
 
-    // Build "Download with Video" — matches logged-in <a class="btn-osu-big btn-osu-big--beatmapset-header">
+    // Build "Download with Video" - matches logged-in <a class="btn-osu-big btn-osu-big--beatmapset-header">
     const aWithVideo = document.createElement("a");
     aWithVideo.className = "btn-osu-big btn-osu-big--beatmapset-header ";
     aWithVideo.href = `https://osu.ppy.sh/beatmapsets/${bmid}/download`;
@@ -6621,7 +6621,7 @@
   }
 
   // Detects osu!plus (limjeck/osuplus) already having injected its own mirror
-  // buttons on this page — it tags them with this exact class in its
+  // buttons on this page - it tags them with this exact class in its
   // makeMirror() function. If present, we skip adding our own to avoid a
   // cluttered duplicate row of near-identical buttons.
   function isOsuPlusMirrorsPresent() {
@@ -6630,7 +6630,7 @@
 
   // Builds a button matching osu!'s own native download-button markup
   // exactly (same classes osu!'s big buttons and osu!plus's mirror buttons
-  // use) — so ours inherit the page's real CSS instead of looking like a
+  // use) - so ours inherit the page's real CSS instead of looking like a
   // custom pill glued on top of it.
   function makeNativeStyleLink(url, topName, bottomName) {
     const a = document.createElement("a");
@@ -6652,7 +6652,7 @@
 
   // Injects native-styled mirror-download buttons onto the beatmapset detail
   // page, right after the official download buttons. These work regardless
-  // of login state or a beatmapset's download_disabled flag — a solid
+  // of login state or a beatmapset's download_disabled flag - a solid
   // fallback for anything the official button can't do. Cheap to call
   // repeatedly; only rebuilds when the current beatmapset id actually
   // changes, and stands down entirely if osu!plus already covers this.
@@ -6734,7 +6734,7 @@
   }
 
   // getCurrentVersion() reads directly from Tampermonkey's GM_info API, which always
-  // mirrors the @version header — no separate constant to keep in sync.
+  // mirrors the @version header - no separate constant to keep in sync.
   function getCurrentVersion() {
     // Primary: Tampermonkey/Violentmonkey expose GM_info.script.version from the @version tag
     if (typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version) {
@@ -6851,7 +6851,7 @@
       animation: "osuFavSlideUp 0.25s ease-out",
     });
 
-    // Gradient accent bar — same as displayUpdateBanner inside the panel
+    // Gradient accent bar - same as displayUpdateBanner inside the panel
     const accentBar = document.createElement("div");
     accentBar.style.cssText =
       "background: var(--osu-fav-accent);padding:8px 14px;" +
@@ -6876,14 +6876,14 @@
 
     accentBar.append(accentLabel, accentClose);
 
-    // Body — same text color and line-height as panel text
+    // Body - same text color and line-height as panel text
     const body = document.createElement("div");
     body.style.cssText = "padding:12px 14px;line-height:1.5;font-size:12px;color:#bbb";
     body.innerHTML =
       `<b style="color:#ddd">osu! Local Favorites</b> has an update ready.<br>` +
       `Install it now to get the latest fixes and features.`;
 
-    // Footer buttons — mirror the toolbar makeBtn style from the panel
+    // Footer buttons - mirror the toolbar makeBtn style from the panel
     const footer = document.createElement("div");
     footer.style.cssText =
       "display:flex;justify-content:flex-end;gap:6px;padding:8px 14px;" +
@@ -6907,7 +6907,7 @@
       GM_setValue("osu_dismissed_version", latestVersion);
     });
 
-    // "Update" button — same style as the in-panel banner's Update button
+    // "Update" button - same style as the in-panel banner's Update button
     const updateBtn = document.createElement("button");
     updateBtn.textContent = "Update Now";
     updateBtn.style.cssText =
@@ -6933,13 +6933,13 @@
     applyTheme();
 
     // osu!'s own qtip tooltips/popups (difficulty hover cards, user cards,
-    // achievement popups, etc.) sit at z-index ~512 on the live site — far
+    // achievement popups, etc.) sit at z-index ~512 on the live site - far
     // below the favorites panel's z-index (100000+). Whenever a tooltip
     // would land underneath the panel's screen area (fixed to the right
     // edge, full viewport height), it rendered completely invisible instead
     // of on top like it should. This is injected unconditionally at init,
     // not folded into the panel's own lazily-created stylesheet, so it's in
-    // effect from the very first hover — not just after the panel has been
+    // effect from the very first hover - not just after the panel has been
     // opened once.
     if (!document.getElementById("osu-fav-qtip-style")) {
       const qtipStyle = document.createElement("style");
@@ -6977,7 +6977,7 @@
     // When another tab writes to the favorites key, refresh all UI in this tab.
     // GM_addValueChangeListener isn't implemented at all in some userscript
     // managers (a hard ReferenceError rather than a graceful no-op stub like
-    // GM_getValue/GM_setValue get) — left unguarded, that throw would abort
+    // GM_getValue/GM_setValue get) - left unguarded, that throw would abort
     // every line below it in this function, including the MutationObserver
     // setup further down that keeps the page's hearts working after the
     // first render. Cross-tab sync is a nice-to-have; losing it silently is
@@ -6987,7 +6987,7 @@
         GM_addValueChangeListener(STORAGE_KEY, (_key, _oldVal, _newVal, remote) => {
           if (!remote) return; // ignore writes from this same tab
 
-          // Another tab replaced the favorites store — drop this tab's
+          // Another tab replaced the favorites store - drop this tab's
           // in-memory copy so the next getFavorites() re-reads persisted
           // state instead of serving a now-stale cached object. Same for
           // the collections cache (collections can also be edited in
@@ -7016,7 +7016,7 @@
       }
     } else {
       console.warn(
-        "[osu-local-favorites] GM_addValueChangeListener not supported by this userscript manager — cross-tab sync disabled",
+        "[osu-local-favorites] GM_addValueChangeListener not supported by this userscript manager - cross-tab sync disabled",
       );
     }
 
@@ -7036,20 +7036,20 @@
       });
     }
 
-    // Debounced observer — runs at most once per 600ms to avoid freezing the page
+    // Debounced observer - runs at most once per 600ms to avoid freezing the page
     let timer = null;
     const debouncedRefresh = () => {
       if (timer) return;
       timer = setTimeout(() => {
         timer = null;
-        // Skip while the tab is in the background — a MutationObserver on
+        // Skip while the tab is in the background - a MutationObserver on
         // the whole document body fires on osu!'s own live-updating content
         // too (dashboard activity feed, notification counts, relative
         // timestamps, etc.), not just our own changes, so on a busy page
         // this can otherwise re-run every ~600ms indefinitely even while
         // nobody's looking at the tab. The visibilitychange listener below
         // catches up in one pass as soon as it's foregrounded again, so
-        // nothing actually goes stale — this just stops paying for it while
+        // nothing actually goes stale - this just stops paying for it while
         // backgrounded.
         if (document.hidden) return;
         refreshButtons();
@@ -7073,12 +7073,12 @@
     attachMainObserver();
 
     // ═══ Turbolinks / back-forward resiliency ═══
-    // osu!'s site navigates via Turbolinks — going back restores a *cached
+    // osu!'s site navigates via Turbolinks - going back restores a *cached
     // snapshot* of the page rather than loading it fresh. That snapshot is a
     // clone of whatever was on the page when it got cached, and cloning does
     // not carry over addEventListener-based handlers. Our own injected
     // elements (floating heart, panel, guest button, mirror row) come back
-    // looking identical but dead — same ids/classes, so our own "already
+    // looking identical but dead - same ids/classes, so our own "already
     // there, skip" guards leave the lifeless clone in place instead of
     // rebuilding a working one, and everything reads as "unresponsive" until
     // a manual page reload. The MutationObserver above silently stops
@@ -7096,7 +7096,7 @@
       document.querySelectorAll(".osu-fav-all-btn").forEach((el) => el.remove());
       document.querySelectorAll("[data-osu-fav-checked]").forEach((btn) => btn.removeAttribute("data-osu-fav-checked"));
       // Beatmap context (isLoggedIn's cached user blob, mirror row state)
-      // is per-page — a Turbolinks navigation may land on a different page
+      // is per-page - a Turbolinks navigation may land on a different page
       // as a different (or no) user, so stale caches must not survive it.
       _loggedInCache = null;
       _loggedInCacheKey = null;
@@ -7111,7 +7111,7 @@
     }
 
     // Turbolinks (classic) fires "turbolinks:load"; Hotwire Turbo renamed it
-    // to "turbo:load" — listen for both since we can't be sure which is live.
+    // to "turbo:load" - listen for both since we can't be sure which is live.
     document.addEventListener("turbolinks:load", hardResync);
     document.addEventListener("turbo:load", hardResync);
     // Fallback for a genuine browser back/forward-cache restore, in case any
@@ -7133,7 +7133,7 @@
       }
     }, 800);
 
-    // Periodic fallback scan — the MutationObserver above catches almost
+    // Periodic fallback scan - the MutationObserver above catches almost
     // everything, but some osu! content (e.g. the lazy-loaded "Beatmaps" tab
     // on profile pages, which only fetches its data once scrolled into view)
     // renders on its own schedule and can occasionally land between observer
@@ -7141,7 +7141,7 @@
     // hearts, the "Favorite all" button, and download links all settle into
     // the correct state within ~1.5s no matter what triggered the render.
     // Skipped while backgrounded for the same reason as debouncedRefresh
-    // above — a background tab has no reason to keep re-scanning the page
+    // above - a background tab has no reason to keep re-scanning the page
     // every 1.5s forever; the visibilitychange listener below runs one pass
     // immediately on returning to the tab instead.
     setInterval(() => {
