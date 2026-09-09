@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.6.4
+// @version      5.6.5
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -7172,10 +7172,24 @@
       if (!document.getElementById("osu-local-fav-ind")) ensureHeartIndicator();
     }, 1500);
 
-    // Catch up in one pass as soon as the tab is foregrounded again, so
-    // pausing the two scans above while hidden never leaves anything stale
-    // for longer than it takes to switch back to the tab.
+    // Firefox Android may hand a media session to Android right as its tab is
+    // backgrounded. Re-publish an active preview at that boundary: this keeps
+    // the OS-owned session authoritative while osu!'s page is hidden and its
+    // regular page timers are throttled. Do not call play() here - playback
+    // was already user-initiated, and calling it again from this lifecycle
+    // event would violate Android's autoplay policy.
     document.addEventListener("visibilitychange", () => {
+      const audio = window._osuFavAudio;
+      if (audio && !audio.paused && !audio.ended && audio._npCurrentId) {
+        setMediaSessionMetadata(audio);
+        setMediaSessionPlaybackState("playing");
+        if (typeof audio._updateMediaSessionPositionState === "function") {
+          audio._updateMediaSessionPositionState();
+        }
+      }
+
+      // Catch up in one pass after returning to the tab, so pausing the scans
+      // above while hidden never leaves the page UI stale.
       if (document.hidden) return;
       refreshButtons();
       addFavoriteAllButtons();
