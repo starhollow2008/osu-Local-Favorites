@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.6.7
+// @version      5.6.9
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -1202,8 +1202,21 @@
     audio.addEventListener("pause", () => {
       if (audio._npPlayBtn) audio._npPlayBtn.innerHTML = playSVG();
       if (!audio.ended) setMediaSessionPlaybackState("paused");
+      // Freeze the OS widget at the exact paused position rather than
+      // whatever it last extrapolated to.
+      updateMediaSessionPositionState();
     });
-    audio.addEventListener("timeupdate", updateMediaSessionPositionState);
+    // Deliberately NOT bound to "timeupdate": that event fires every ~250ms
+    // while foregrounded but gets throttled to roughly once/sec by the
+    // browser when the tab is backgrounded - which is exactly when someone
+    // is actually looking at this position (lock screen / OS media widget,
+    // not our own in-page mini-player). Each throttled call reports a
+    // position that's already ~1s stale by the time it reaches the native
+    // widget, so the widget snaps back to it before resuming forward - a
+    // visible "rewinds 1s every second" stutter. setPositionState() exists
+    // precisely so the OS can extrapolate the position itself between
+    // updates; we only need to call it on real discontinuities.
+    audio.addEventListener("seeked", updateMediaSessionPositionState);
     audio.addEventListener("loadedmetadata", updateMediaSessionPositionState);
     audio.addEventListener("durationchange", updateMediaSessionPositionState);
     audio.addEventListener("ratechange", updateMediaSessionPositionState);
@@ -5074,6 +5087,94 @@
           showToast(`Added ${added}. Total: ${Object.keys(existing).length}`);
         } catch (err) {
           reportError("Import backup", err);
+        }
+        e.target.value = "";
+      });
+
+      // Collections have their own portable backup: map memberships are small
+      // and useful to move independently of the (potentially much larger)
+      // favorite library. The exported object deliberately matches the
+      // COLLECTIONS_KEY storage format so it remains simple and future-proof.
+      const collectionsRow = document.createElement("div");
+      collectionsRow.style.cssText = "display:flex;gap:6px;padding-bottom:4px";
+      const backupCollectionsBtn = makeBtn("Backup Collections", "flex:1;text-align:center;padding:6px");
+      const importCollectionsBtn = makeBtn("Import Collections", "flex:1;text-align:center;padding:6px");
+      const importCollectionsFile = document.createElement("input");
+      importCollectionsFile.type = "file";
+      importCollectionsFile.accept = ".json,application/json";
+      importCollectionsFile.style.display = "none";
+      collectionsRow.append(backupCollectionsBtn, importCollectionsBtn, importCollectionsFile);
+      wrap.appendChild(collectionsRow);
+
+      function collectionBackupUsername() {
+        let username = "";
+        try {
+          const currentUser = document.getElementById("json-current-user");
+          const user = currentUser && JSON.parse(currentUser.textContent || "{}");
+          username = (user && user.username) || "";
+        } catch (_) {}
+        username = username || GM_getValue(OSU_API_USERNAME_KEY, "") || GM_getValue(GH_USERNAME_KEY, "") || "local";
+        // Keep the suggested filename valid on Windows, Android, and macOS.
+        return String(username).trim().replace(/[\\/:*?"<>|]+/g, "_") || "local";
+      }
+
+      backupCollectionsBtn.addEventListener("click", () => {
+        const blob = new Blob([JSON.stringify(getCollections(), null, 2)], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `collections-${collectionBackupUsername()}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        showToast("Collections backed up!");
+      });
+
+      importCollectionsBtn.addEventListener("click", () => importCollectionsFile.click());
+      importCollectionsFile.addEventListener("change", async (e) => {
+        if (!e.target.files[0]) return;
+        try {
+          const imported = JSON.parse(await e.target.files[0].text());
+          if (!imported || typeof imported !== "object" || Array.isArray(imported)) {
+            throw new Error("Expected a collections JSON object");
+          }
+
+          const collections = getCollections();
+          const byName = new Map(
+            Object.entries(collections).map(([id, col]) => [String((col && col.name) || "").trim().toLowerCase(), id]),
+          );
+          let added = 0;
+          let merged = 0;
+          for (const [sourceId, source] of Object.entries(imported)) {
+            if (!source || typeof source !== "object" || Array.isArray(source)) continue;
+            const name = String(source.name || "Untitled").trim() || "Untitled";
+            const ids = Array.isArray(source.ids) ? [...new Set(source.ids.map(String).filter(Boolean))] : [];
+            const nameKey = name.toLowerCase();
+            const existingId = byName.get(nameKey);
+            if (existingId && collections[existingId]) {
+              const existingIds = Array.isArray(collections[existingId].ids) ? collections[existingId].ids.map(String) : [];
+              const combined = [...new Set([...existingIds, ...ids])];
+              if (combined.length !== existingIds.length) merged++;
+              collections[existingId].ids = combined;
+              continue;
+            }
+
+            let id = String(sourceId || "");
+            while (!id || collections[id] || ["__proto__", "constructor", "prototype"].includes(id)) {
+              id = "col_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+            }
+            collections[id] = {
+              name,
+              created: typeof source.created === "string" ? source.created : new Date().toISOString(),
+              ids,
+            };
+            byName.set(nameKey, id);
+            added++;
+          }
+          setCollections(collections);
+          updateCollectionsBtn();
+          renderList();
+          showToast(`Imported ${added} collection${added === 1 ? "" : "s"}${merged ? `; merged ${merged}` : ""}`);
+        } catch (err) {
+          reportError("Import collections", err);
         }
         e.target.value = "";
       });
