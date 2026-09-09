@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.6.6
+// @version      5.6.7
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -1235,6 +1235,28 @@
       audio._activePreviewUrl = fallbackUrl;
       audio.src = fallbackUrl;
       audio.load();
+
+      // Source replacement can make Firefox briefly report the failed mirror
+      // as paused before the new preview begins. Keep the panel's mini-player
+      // attached through that hand-off; the guards ensure an error or a newly
+      // selected track can still remove it normally.
+      const fallbackTrackId = audio._npCurrentId;
+      const keepFallbackMiniPlayerVisible = () => {
+        if (
+          audio._npCurrentId !== fallbackTrackId ||
+          audio._activePreviewUrl !== fallbackUrl ||
+          audio.ended ||
+          !audio._npBar
+        ) return;
+        const bottomBar = audio._npBar.closest("#osu-fav-bottom-bar");
+        if (!bottomBar || bottomBar.dataset.view !== "settings") {
+          audio._npBar.style.display = "flex";
+        }
+      };
+      keepFallbackMiniPlayerVisible();
+      setTimeout(keepFallbackMiniPlayerVisible, 0);
+      setTimeout(keepFallbackMiniPlayerVisible, 300);
+
       const retry = audio.play();
       if (retry && typeof retry.catch === "function") {
         // The fallback can be selected from an asynchronous media error,
@@ -4438,6 +4460,7 @@
       // replaced it with osu!'s working preview (e.g. Nightrunning (7_7
       // Bootleg)).
       const sourceAtPlayRequest = previewUrl;
+      const wasFullSongRequest = audio._usingFullSongSource;
       const playPromise = audio.play();
       if (playPromise && typeof playPromise.catch === "function") {
         playPromise.catch(() => {
@@ -4445,9 +4468,12 @@
           // the official fallback, or to a track the user has moved away from.
           // Its rejection is stale and must not hide the active mini-player.
           if (audio._npCurrentId !== id || audio._activePreviewUrl !== sourceAtPlayRequest) return;
-          // Let the media error handler switch a failed mirror request to the
-          // official preview before tearing down the player UI.
-          if (audio._usingFullSongSource && !audio._sourceFallbackAttempted) return;
+          // Firefox can reject the original mirror play() asynchronously even
+          // after its error event has selected the official fallback. That
+          // promise belongs to the mirror forever; only the media error path
+          // may decide whether the replacement preview has genuinely failed.
+          if (wasFullSongRequest) return;
+          // A direct official preview has no alternative source to recover to.
           resetActiveCardUI(audio);
           if (audio._npBar) audio._npBar.style.display = "none";
           clearMediaSession();
