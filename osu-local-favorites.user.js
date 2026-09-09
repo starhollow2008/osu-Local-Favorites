@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.5.2
+// @version      5.5.6
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -693,11 +693,19 @@
   // osu!'s own preview clip is a fixed ~10s cut. mirror.hinamizawa.ai runs a
   // separate music-streaming API (distinct from its beatmap-download mirror)
   // that serves the full track from its own disk when it has one cached, and
-  // otherwise transparently falls back to proxying the same ~10s official
+  // otherwise transparently falls back to proxying the same ~30s official
   // clip while it extracts the full song in the background — so pointing
   // the preview player at it is a strict upgrade, never a worse experience
   // than what we already show. No auth, open CORS, HTTP Range for seeking.
   const PREVIEW_FULLSONG_KEY = "osu_preview_fullsong";
+  const HINAI_MUSIC_API_BASE = "https://mirror.hinamizawa.ai/v3/osu/music";
+  // The mirror asks integrations to identify themselves so traffic can be
+  // attributed and supported. Keep this separate from navigator.userAgent:
+  // browser media requests control their own forbidden User-Agent header,
+  // while the metadata request below is made through GM_xmlhttpRequest.
+  const HINAI_MUSIC_USER_AGENT =
+    "osu-Local-Favorites https://github.com/starhollow2008/osu-Local-Favorites";
+  const _hinaiSongRequests = new Map(); // beatmapset id -> Promise<Song|null>
 
   // Firefox for Android on some devices (including Redmi models) is much
   // less forgiving of a cold cross-origin stream. Keep the mirror as the
@@ -715,7 +723,64 @@
   }
   function previewSourceUrl(id, fallbackUrl) {
     if (!fullSongPreviewsEnabled()) return fallbackUrl;
-    return `https://mirror.hinamizawa.ai/v3/osu/music/audio/${id}`;
+    return `${HINAI_MUSIC_API_BASE}/audio/${id}`;
+  }
+
+  // Fetch only when a user starts a track, never once per visible card. The
+  // Song response's duration_sec lets us distinguish a genuinely short song
+  // from the mirror's transitional ~30s osu! preview without delaying the
+  // click that starts playback.
+  function fetchHinaiSong(id) {
+    const key = String(id);
+    if (_hinaiSongRequests.has(key)) return _hinaiSongRequests.get(key);
+    const request = new Promise((resolve) => {
+      if (typeof GM_xmlhttpRequest !== "function") { resolve(null); return; }
+      try {
+        GM_xmlhttpRequest({
+          method: "GET",
+          url: `${HINAI_MUSIC_API_BASE}/song/${encodeURIComponent(key)}`,
+          headers: {
+            Accept: "application/json",
+            "User-Agent": HINAI_MUSIC_USER_AGENT,
+          },
+          timeout: 10000,
+          onload: (response) => {
+            if (response.status < 200 || response.status >= 300) { resolve(null); return; }
+            try {
+              const song = JSON.parse(response.responseText);
+              resolve(song && String(song.beatmapset_id) === key ? song : null);
+            } catch (_) {
+              resolve(null);
+            }
+          },
+          onerror: () => resolve(null),
+          ontimeout: () => resolve(null),
+        });
+      } catch (_) {
+        resolve(null);
+      }
+    });
+    _hinaiSongRequests.set(key, request);
+    return request;
+  }
+
+  function hinaiDurationSec(value) {
+    const duration = Number(value);
+    return Number.isFinite(duration) && duration >= 0 ? duration : null;
+  }
+
+  // Preserve the useful metadata across panel re-renders and future plays.
+  // These fields intentionally match the Music API response names.
+  function storeHinaiSongMetadata(id, song) {
+    const favs = getFavorites();
+    const fav = favs[String(id)];
+    if (!fav || !song) return;
+    const duration = hinaiDurationSec(song.duration_sec);
+    const changed = fav.duration_sec !== duration || fav.audio_cached !== song.audio_cached;
+    if (!changed) return;
+    favs[String(id)] = { ...fav, duration_sec: duration, audio_cached: song.audio_cached };
+    setFavorites(favs);
+    scheduleAutoBackup();
   }
 
   // ═══ Music Playback settings (loop / auto next / shuffle / volume) ═══
@@ -965,9 +1030,10 @@
     });
   }
 
-  // A clip this short means Hinamizawa does not have the full track cached;
-  // the media handlers below then switch to osu!'s own ~10s preview.
-  const SHORT_CLIP_MAX_SECONDS = 15;
+  // Used only when the Song metadata could not be read. The mirror's
+  // transitional preview is about 30 seconds; duration_sec is the preferred
+  // check because a real song may itself be short.
+  const SHORT_CLIP_MAX_SECONDS = 35;
 
   function hasMediaSession() {
     return "mediaSession" in navigator && navigator.mediaSession;
@@ -1053,6 +1119,7 @@
     audio._fallbackPreviewUrl = null;
     audio._usingFullSongSource = false;
     audio._sourceFallbackAttempted = false;
+    audio._hinaiDurationSec = null;
 
     audio.addEventListener("timeupdate", () => {
       const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
@@ -1160,13 +1227,30 @@
       return true;
     }
 
+    function hinaiReturnedPreview(audioEl) {
+      if (!Number.isFinite(audioEl.duration)) return false;
+      const expectedDuration = hinaiDurationSec(audioEl._hinaiDurationSec);
+      if (expectedDuration !== null) {
+        // Container/MP3 duration rounding is normally sub-second. Permit a
+        // small margin, but a 30s fallback for a multi-minute song is never
+        // mistaken for a full track.
+        const margin = Math.max(2, expectedDuration * 0.01);
+        return audioEl.duration + margin < expectedDuration;
+      }
+      return audioEl.duration <= SHORT_CLIP_MAX_SECONDS;
+    }
+
+    audio._maybeFallbackToOfficial = () => {
+      if (audio._usingFullSongSource && hinaiReturnedPreview(audio)) {
+        fallbackToOfficialPreview(audio.currentSrc || audio.src);
+      }
+    };
+
     audio.addEventListener("loadedmetadata", () => {
-      if (!audio._usingFullSongSource) return;
-      if (!isFinite(audio.duration) || audio.duration > SHORT_CLIP_MAX_SECONDS) return;
-      // The mirror endpoint uses the short osu! clip when it has no full
-      // track. Do not expose that as the selected result: switch to osu!'s
-      // official preview instead, for direct clicks and queue navigation.
-      fallbackToOfficialPreview(audio.currentSrc || audio.src);
+      // The mirror endpoint uses a short osu! clip when it has no full
+      // track. duration_sec, when available, avoids treating a genuinely
+      // short full song as that fallback.
+      audio._maybeFallbackToOfficial();
     });
 
     // A mirror can be cold, unavailable, or return a response Firefox cannot
@@ -1956,7 +2040,7 @@
         method,
         url: "https://api.github.com" + path,
         headers: {
-          Authorization: "token " + token,
+          ...(token ? { Authorization: "token " + token } : {}),
           Accept: "application/vnd.github+json",
           "Content-Type": "application/json",
         },
@@ -4211,6 +4295,7 @@
       audio._fallbackPreviewUrl = fallbackPreviewUrl;
       audio._usingFullSongSource = previewUrl !== fallbackPreviewUrl;
       audio._sourceFallbackAttempted = false;
+      audio._hinaiDurationSec = hinaiDurationSec(f.duration_sec);
       audio._queueNavigated = navigated;
       audio._queueDirection = direction;
       audio._queueSkipAttempt = skipAttempt;
@@ -4279,6 +4364,20 @@
       audio._activePreviewUrl = previewUrl;
       audio.src = previewUrl;
       audio.load();
+
+      if (audio._usingFullSongSource) {
+        fetchHinaiSong(id).then((song) => {
+          if (!song) return;
+          storeHinaiSongMetadata(id, song);
+          // A response may arrive after the user chose another card. Only
+          // apply it to the media element while this exact track/source is
+          // still active.
+          if (!audio._usingFullSongSource || audio._npCurrentId !== id) return;
+          audio._hinaiDurationSec = hinaiDurationSec(song.duration_sec);
+          audio._maybeFallbackToOfficial();
+        });
+      }
+
       const playPromise = audio.play();
       if (playPromise && typeof playPromise.catch === "function") {
         playPromise.catch(() => {
@@ -4824,8 +4923,9 @@
       // that are actually part of the live document tree.
       settingsView.appendChild(wrap);
 
-      // ── Backup & Restore (Export / Import) ──
-      wrap.appendChild(sectionLabel("Backup & Restore"));
+      function appendBackupRestoreSection() {
+        // ── Backup & Restore (Export / Import) ──
+        wrap.appendChild(sectionLabel("Backup & Restore"));
 
       const backupRow = document.createElement("div");
       backupRow.style.cssText = "display:flex;gap:6px;padding-bottom:4px";
@@ -4877,13 +4977,25 @@
         e.target.value = "";
       });
 
-      wrap.appendChild(divider());
+      }
 
       // ── Version / update check ──
       const verLabel = document.createElement("div");
       verLabel.style.cssText = "font-size:10px;color:#666;margin-bottom:6px";
       verLabel.textContent = "Running v" + getCurrentVersion();
       wrap.appendChild(verLabel);
+
+      const autoUpdateToggle = makeToggleSwitch(autoUpdateChecksEnabled(), (on) => {
+        GM_setValue(AUTO_UPDATE_CHECK_KEY, on);
+        showToast(on ? "Automatic update checks enabled" : "Automatic update checks disabled");
+      });
+      wrap.appendChild(
+        settingsRow(
+          "Automatic updates",
+          autoUpdateToggle,
+          "Check for new script versions on page load and when opening this panel",
+        ),
+      );
 
       const checkUpdateBtn = makeBtn("Check for update", "width:100%;box-sizing:border-box;text-align:center;padding:6px;margin-bottom:4px");
       wrap.appendChild(checkUpdateBtn);
@@ -5030,6 +5142,65 @@
               updateFooterStatus();
             });
         });
+
+        // Public gists can be read without authentication. Keep this import
+        // path available before connection: it deliberately does not set the
+        // backup target, so connecting/backing up later remains independent.
+        const fetchRow = document.createElement("div");
+        fetchRow.style.cssText = "display:flex;gap:6px;margin-top:10px";
+        const fetchInput = document.createElement("input");
+        fetchInput.type = "text";
+        fetchInput.placeholder = "Gist ID or URL";
+        fetchInput.style.cssText =
+          "flex:1;min-width:0;box-sizing:border-box;padding:6px 10px;background:#111;" +
+          "border:1px solid #333;border-radius:3px;color:#ddd;font-size:11px;outline:none";
+        fetchInput.addEventListener("focus", () => (fetchInput.style.borderColor = "var(--osu-fav-accent)"));
+        fetchInput.addEventListener("blur", () => (fetchInput.style.borderColor = "#333"));
+        const fetchBtn = makeBtn("Fetch", "flex-shrink:0;padding:6px 12px");
+        fetchRow.append(fetchInput, fetchBtn);
+        wrap.appendChild(fetchRow);
+
+        const fetchHint = document.createElement("div");
+        fetchHint.style.cssText = "font-size:10px;color:#666;margin-top:4px;line-height:1.4";
+        fetchHint.textContent =
+          "Pull from any gist — your own or someone else's shared list — without " +
+          "changing what Backup now targets. Handy on a new device before your first backup.";
+        wrap.appendChild(fetchHint);
+
+        fetchBtn.addEventListener("click", () => {
+          const raw = fetchInput.value.trim();
+          if (!raw) {
+            showToast("Paste a gist ID or URL first");
+            return;
+          }
+          const gistId = parseGistId(raw);
+          fetchBtn.textContent = "Fetching...";
+          fetchBtn.disabled = true;
+          ghGetGistContent("", gistId)
+            .then((data) => {
+              if (typeof data !== "object" || Array.isArray(data)) {
+                throw new Error("Malformed backup data");
+              }
+              const existing = getFavorites();
+              let added = 0;
+              for (const [id, fav] of Object.entries(data)) {
+                if (!existing[id]) {
+                  existing[id] = fav;
+                  added++;
+                }
+              }
+              setFavorites(existing);
+              updateFloatingHeart();
+              renderList();
+              fetchInput.value = "";
+              showToast(`Fetched — added ${added} maps`);
+            })
+            .catch((err) => reportError("Gist fetch", err))
+            .then(() => {
+              fetchBtn.disabled = false;
+              fetchBtn.textContent = "Fetch";
+            });
+        });
       } else {
         const statusRow = document.createElement("div");
         statusRow.style.cssText = "display:flex;align-items:center;gap:6px;margin-bottom:10px";
@@ -5059,7 +5230,7 @@
           if (on) scheduleAutoBackup();
         });
         wrap.appendChild(
-          settingsRow("Auto-update", autoToggle, "Automatically push newly added maps to the Gist"),
+          settingsRow("Auto-backup", autoToggle, "Automatically push newly added maps to the Gist"),
         );
 
         const privacy = GM_getValue(GH_PRIVACY_KEY, "private");
@@ -5218,6 +5389,7 @@
         wrap.appendChild(syncInfo);
       }
 
+      appendBackupRestoreSection();
       wrap.appendChild(divider());
 
       // ── Download Mirrors ──
@@ -6120,13 +6292,16 @@
     updateFooterStatus();
     updateMobileSearchBar();
 
-    // Always check for updates on panel open (force=true skips 24h throttle)
-    const currentVersion = getCurrentVersion();
-    checkVersionUpdate(true).then((latestVersion) => {
-      if (latestVersion && isNewerVersion(currentVersion, latestVersion)) {
-        showPanelUpdateOverlay(latestVersion);
-      }
-    });
+    // Automatic checks can be disabled in Settings. Manual checks remain
+    // available from Settings and the userscript menu either way.
+    if (autoUpdateChecksEnabled()) {
+      const currentVersion = getCurrentVersion();
+      checkVersionUpdate(true).then((latestVersion) => {
+        if (latestVersion && isNewerVersion(currentVersion, latestVersion)) {
+          showPanelUpdateOverlay(latestVersion);
+        }
+      });
+    }
   }
 
   // ═══ Menu commands ═══
@@ -6483,6 +6658,12 @@
   }
 
   // ═══ Version check & update helper ═══
+  const AUTO_UPDATE_CHECK_KEY = "osu_auto_update_checks";
+
+  function autoUpdateChecksEnabled() {
+    return GM_getValue(AUTO_UPDATE_CHECK_KEY, true);
+  }
+
   // getCurrentVersion() reads directly from Tampermonkey's GM_info API, which always
   // mirrors the @version header — no separate constant to keep in sync.
   function getCurrentVersion() {
@@ -6776,13 +6957,15 @@
     enableGuestDownloads();
     injectMirrorButtons();
 
-    // Auto-check version update on script load
-    checkVersionUpdate().then((latestVersion) => {
-      const currentVersion = getCurrentVersion();
-      if (latestVersion && isNewerVersion(currentVersion, latestVersion)) {
-        showUpdatePrompt(latestVersion);
-      }
-    });
+    // Auto-check version updates only when the user has left the setting on.
+    if (autoUpdateChecksEnabled()) {
+      checkVersionUpdate().then((latestVersion) => {
+        const currentVersion = getCurrentVersion();
+        if (latestVersion && isNewerVersion(currentVersion, latestVersion)) {
+          showUpdatePrompt(latestVersion);
+        }
+      });
+    }
 
     // Debounced observer — runs at most once per 600ms to avoid freezing the page
     let timer = null;
