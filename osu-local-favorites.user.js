@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.6.1
+// @version      5.6.3
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -2430,13 +2430,23 @@
     const gistId = GM_getValue(GH_GIST_ID_KEY, "");
     const isPublic = GM_getValue(GH_PRIVACY_KEY, "private") === "public";
 
-    const p = gistId
-      ? ghUpdateGist(token, gistId, favs)
-      : ghCreateGist(token, favs, isPublic).then((gist) => {
+    const createAndLink = () => ghCreateGist(token, favs, isPublic).then((gist) => {
         GM_setValue(GH_GIST_ID_KEY, gist.id);
         GM_setValue(GH_GIST_URL_KEY, gist.html_url || "");
         return gist;
       });
+
+    const p = gistId
+      ? ghUpdateGist(token, gistId, favs).catch((err) => {
+        // A user can delete the linked gist directly on GitHub. Treat its 404
+        // as a stale local link, create a replacement, and relink it so both
+        // manual and automatic backups recover on the same attempt.
+        if (!err || err.status !== 404) throw err;
+        GM_setValue(GH_GIST_ID_KEY, "");
+        GM_setValue(GH_GIST_URL_KEY, "");
+        return createAndLink();
+      })
+      : createAndLink();
 
     return p.then((gist) => {
       GM_setValue(GH_LAST_SYNC_KEY, Date.now());
@@ -5821,9 +5831,7 @@
       const favs = getFavorites();
       let entries = Object.entries(favs);
 
-      // Update count badge
       const cBadge = panel.querySelector("#osu-fav-count");
-      if (cBadge) cBadge.textContent = Object.keys(favs).length;
 
       // Filter
       if (searchQuery.trim()) {
@@ -5861,6 +5869,10 @@
         const idSet = new Set(col && Array.isArray(col.ids) ? col.ids : []);
         entries = entries.filter(([id]) => idSet.has(id));
       }
+
+      // The badge reflects the visible result set after search, genre/tag,
+      // and collection filters, rather than always showing the library total.
+      if (cBadge) cBadge.textContent = entries.length;
 
       // Sort
       entries.sort(([idA, a], [idB, b]) => {
