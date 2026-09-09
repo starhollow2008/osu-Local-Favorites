@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.6.3
+// @version      5.6.4
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -1127,20 +1127,33 @@
       if (audio._npProgressBar) audio._npProgressBar.style.width = pct + "%";
     });
 
+    // Firefox for Android can expose a live/cross-origin stream to Android's
+    // media notification before it has derived a finite HTMLMediaElement
+    // duration. The Hinamizawa Song response already contains that duration,
+    // so use it as a temporary media-session value instead of publishing the
+    // 00:00–00:00 range shown by Redmi's system player.
+    function mediaSessionDuration() {
+      if (Number.isFinite(audio.duration) && audio.duration > 0) return audio.duration;
+      const hintedDuration = hinaiDurationSec(audio._hinaiDurationSec);
+      return hintedDuration !== null && hintedDuration > 0 ? hintedDuration : null;
+    }
+
     function updateMediaSessionPositionState() {
       if (!hasMediaSession() || typeof navigator.mediaSession.setPositionState !== "function") return;
-      if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+      const duration = mediaSessionDuration();
+      if (duration === null) return;
       try {
         navigator.mediaSession.setPositionState({
-          duration: audio.duration,
+          duration,
           playbackRate: audio.playbackRate || 1,
-          position: Math.min(audio.currentTime || 0, audio.duration),
+          position: Math.min(Math.max(0, audio.currentTime || 0), duration),
         });
       } catch (_) {
         // Some Firefox Android builds reject position updates while media is
         // transitioning between sources; playback itself is still fine.
       }
     }
+    audio._updateMediaSessionPositionState = updateMediaSessionPositionState;
 
     // Firefox Android exposes this element through Android's media controls
     // when Media Session metadata/actions are supplied.
@@ -1184,6 +1197,7 @@
       if (audio._npPlayBtn) audio._npPlayBtn.innerHTML = pauseSVG();
       setMediaSessionMetadata(audio);
       setMediaSessionPlaybackState("playing");
+      updateMediaSessionPositionState();
     });
     audio.addEventListener("pause", () => {
       if (audio._npPlayBtn) audio._npPlayBtn.innerHTML = playSVG();
@@ -1217,6 +1231,7 @@
 
       audio._sourceFallbackAttempted = true;
       audio._usingFullSongSource = false;
+      audio._hinaiDurationSec = null;
       audio._activePreviewUrl = fallbackUrl;
       audio.src = fallbackUrl;
       audio.load();
@@ -4411,6 +4426,9 @@
           // still active.
           if (!audio._usingFullSongSource || audio._npCurrentId !== id) return;
           audio._hinaiDurationSec = hinaiDurationSec(song.duration_sec);
+          // This often arrives after playback has already created Android's
+          // media notification, so submit a second position state now.
+          audio._updateMediaSessionPositionState();
           audio._maybeFallbackToOfficial();
         });
       }
