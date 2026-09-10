@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js
-// @version      5.6.10
+// @version      5.6.11
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -1330,7 +1330,14 @@
     });
 
     audio.addEventListener("ended", () => {
-      clearMediaSession();
+      // Do NOT clearMediaSession() before a loop/auto-next: nulling the
+      // metadata (even for one synchronous tick before startPlayback()
+      // re-populates it) can make Android treat the session as ended and
+      // tear down the notification's foreground service. On a locked
+      // screen there is nothing left keeping the page alive after that, so
+      // playback dies a few seconds into the *next* track even though the
+      // handoff itself looked instantaneous in the console. Only clear the
+      // session on the branches below where playback is actually stopping.
       if (musicLoopEnabled()) {
         audio.currentTime = 0;
         audio.play();
@@ -1340,6 +1347,7 @@
         audio._queueAdvance(1, {});
         return;
       }
+      clearMediaSession();
       if (audio._activeBtn) {
         audio._activeBtn.style.opacity = "var(--osu-fav-idle-opacity, 0.15)";
         audio._activeBtn.style.borderColor = "#333";
@@ -4392,7 +4400,14 @@
 
       const playbackCover = getPlaybackCover(f, id);
       setMediaSessionMetadata(audio);
-      setMediaSessionPlaybackState("none");
+      // Don't drop playbackState to "none" here: this runs on every track
+      // handoff (including auto-next while backgrounded), and the load()
+      // below takes a moment before the "play" listener sets it back to
+      // "playing". Reporting "none" during that gap is a second way Android
+      // can read the session as ended and kill the notification's
+      // foreground service on a locked screen. Leave the previous state
+      // (normally still "playing") in place; the "play" event corrects it
+      // moments later regardless.
       if (audio._npThumb) {
         if (playbackCover) {
           audio._npThumb.src = playbackCover;
