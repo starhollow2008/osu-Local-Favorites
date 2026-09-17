@@ -1,0 +1,17 @@
+{
+  "name": "osu-local-favorites",
+  "version": "5.8.1",
+  "description": "Store osu! beatmap favorites locally instead of on osu!'s servers. Modular source + wiring-checked build.",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build": "node build/build.js",
+    "check": "node build/build.js --check",
+    "check:strict": "node build/build.js --check --strict",
+    "check:cache": "node build/check-cache-first.js",
+    "prepublishOnly": "node build/build.js --strict"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

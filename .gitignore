@@ -1,3 +1,15 @@
 *.zip
 *.log
 *.json
+
+
+# The original rule here was a blanket `*.json`, which now would swallow
+# package.json and build/modules.json - both of which the build needs.
+# Ignore stray data dumps instead, and keep the config files tracked.
+*.backup.json
+node_modules/
+
+# dist/ is generated, but osu-local-favorites.user.js is the file users
+# install from the repo, so it stays tracked on purpose.
+dist/.build-check.js
+
