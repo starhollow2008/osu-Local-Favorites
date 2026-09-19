@@ -11,7 +11,7 @@ Replaces the default "Favorite" button on [osu.ppy.sh](https://osu.ppy.sh) with 
 ### Tampermonkey Userscript
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/)
-2. **[Click here to install](https://github.com/starhollow2008/osu-Local-Favorites/raw/main/osu-local-favorites.user.js)** - Tampermonkey will open the installation page automatically.
+2. **[Click here to install](https://github.com/starhollow2008/osu-Local-Favorites/raw/refs/heads/main/dist/osu-local-favorites.user.js)** - Tampermonkey will open the installation page automatically.
 
 The script adds a **View Local Favorites** option in the Tampermonkey menu. Click it to open a side panel with all your favorites.
 

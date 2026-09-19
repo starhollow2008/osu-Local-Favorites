@@ -77,7 +77,7 @@ function init() {
 
   injectInterceptor();
   // OAuth callback must be handled as early as possible so the user never
-  // sees osu!'s 404 page for /osu-local-favorites.
+  // sees a flash of the raw ?code=…&state=… query string on /home.
   osuApiHandleOAuthCallback();
 
   // One-time-per-favorite migration: back-fill the enrichment queue with

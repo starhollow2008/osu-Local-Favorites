@@ -55,7 +55,7 @@ export function checkVersionUpdate(force = false) {
     GM_xmlhttpRequest({
       method: "GET",
       // Always fetch the live main branch so version checks pick up real releases
-      url: "https://raw.githubusercontent.com/starhollow2008/LOF/main/osu-local-favorites.user.js",
+      url: "https://raw.githubusercontent.com/starhollow2008/LOF/refs/heads/main/dist/osu-local-favorites.user.js",
       timeout: 10000,
       onload: function (response) {
         GM_setValue("osu_last_version_check", Date.now());

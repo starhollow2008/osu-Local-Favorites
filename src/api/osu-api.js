@@ -8,10 +8,10 @@ import { getFavorites } from "../data/storage.js";
 // Same mechanism standard osu! extensions use: the user creates an OAuth
 // application on their osu! account settings (new OAuth app), enters its
 // Client ID + Client Secret in LOF's settings, and registers exactly
-// https://osu.ppy.sh/osu-local-favorites as the callback URL. The script
+// https://osu.ppy.sh/home as the callback URL. The script
 // then drives the full flow itself:
 //   1. osuApiStartAuth()      → navigates to /oauth/authorize with a random state
-//   2. osu! redirects back to /osu-local-favorites?code=…&state=…
+//   2. osu! redirects back to /home?code=…&state=…
 //   3. osuApiHandleOAuthCallback() (runs at document-start) exchanges the
 //      code at /oauth/token, stores access+refresh tokens and wipes the
 //      query string so the user never sees osu!'s 404 page.

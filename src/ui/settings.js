@@ -635,7 +635,7 @@ export function createSettingsView(deps) {
             // Offer a one-click jump to the install URL
             setTimeout(() => {
               window.open(
-                "https://github.com/starhollow2008/LOF/raw/main/osu-local-favorites.user.js",
+                "https://github.com/starhollow2008/LOF/raw/refs/heads/main/dist/osu-local-favorites.user.js",
                 "_blank",
               );
             }, 500);
@@ -664,7 +664,7 @@ export function createSettingsView(deps) {
       apiHint.innerHTML =
         "Connect the official osu! API v2 for reliable metadata enrichment. Create an " +
         '<a href="https://osu.ppy.sh/home/account/edit#new-oauth-application" target="_blank" style="color:var(--osu-fav-accent);text-decoration:none">new OAuth application →</a>' +
-        " with callback URL <code style='color:#aaa'>https://osu.ppy.sh/osu-local-favorites</code> (not the GitHub repository URL), then paste its Client ID and Secret below.";
+        " with callback URL <code style='color:#aaa'>https://osu.ppy.sh/home</code>, then paste its Client ID and Secret below.";
       wrap.appendChild(apiHint);
     } else {
       // Same status row as the Gist section below: coloured dot, ellipsised
@@ -720,7 +720,7 @@ export function createSettingsView(deps) {
         }
         GM_setValue(OSU_API_CLIENT_ID_KEY, id);
         GM_setValue(OSU_API_CLIENT_SECRET_KEY, secret);
-        // Redirects to osu!'s authorize page; we resume on /osu-local-favorites?code=…
+        // Redirects to osu!'s authorize page; we resume on /home?code=…
         osuApiStartAuth();
       });
     }
@@ -1109,7 +1109,7 @@ export function createSettingsView(deps) {
     hinaLink.style.cssText = "color:var(--osu-fav-accent);text-decoration:none";
     hinaLink.addEventListener("mouseenter", () => (hinaLink.style.textDecoration = "underline"));
     hinaLink.addEventListener("mouseleave", () => (hinaLink.style.textDecoration = "none"));
-    fullSongSubtitle.append("Streams from ", hinaLink, " - no login required");
+    fullSongSubtitle.append("Streams from ", hinaLink);
     wrap.appendChild(settingsRow("Full-length previews", fullSongToggle, fullSongSubtitle));
 
     const loopToggle = makeToggleSwitch(musicLoopEnabled(), (on) => {

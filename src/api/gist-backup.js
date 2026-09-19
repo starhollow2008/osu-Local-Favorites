@@ -9,7 +9,7 @@ export const OSU_API_STATE_KEY = "osu_api_oauth_state";
 export const OSU_API_USERNAME_KEY = "osu_api_username";
 // The redirect URI users must register on their osu! OAuth application.
 // Must match EXACTLY (scheme/host/path, no trailing slash).
-export const OSU_API_REDIRECT_URI = "https://osu.ppy.sh/osu-local-favorites";
+export const OSU_API_REDIRECT_URI = "https://osu.ppy.sh/home";
 export const GH_USERNAME_KEY = "osu_github_username";
 export const GH_GIST_ID_KEY = "osu_github_gist_id";
 export const GH_GIST_URL_KEY = "osu_github_gist_url";

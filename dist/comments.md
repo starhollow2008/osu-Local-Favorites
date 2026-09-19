@@ -1688,10 +1688,10 @@ Not listed here, because they stay in the built file:
 // Same mechanism standard osu! extensions use: the user creates an OAuth
 // application on their osu! account settings (new OAuth app), enters its
 // Client ID + Client Secret in LOF's settings, and registers exactly
-// https://osu.ppy.sh/osu-local-favorites as the callback URL. The script
+// https://osu.ppy.sh/home as the callback URL. The script
 // then drives the full flow itself:
 //   1. osuApiStartAuth()      → navigates to /oauth/authorize with a random state
-//   2. osu! redirects back to /osu-local-favorites?code=…&state=…
+//   2. osu! redirects back to /home?code=…&state=…
 //   3. osuApiHandleOAuthCallback() (runs at document-start) exchanges the
 //      code at /oauth/token, stores access+refresh tokens and wipes the
 //      query string so the user never sees osu!'s 404 page.
@@ -2919,7 +2919,7 @@ Not listed here, because they stay in the built file:
 **[L4377](./osu-local-favorites.user.js#L4377)** · src L723
 
 ```js
-// Redirects to osu!'s authorize page; we resume on /osu-local-favorites?code=…
+// Redirects to osu!'s authorize page; we resume on /home?code=…
 ```
 
 **[L4385](./osu-local-favorites.user.js#L4385)** · src L732
@@ -4197,7 +4197,7 @@ Not listed here, because they stay in the built file:
 
 ```js
 // OAuth callback must be handled as early as possible so the user never
-// sees osu!'s 404 page for /osu-local-favorites.
+// sees a flash of the raw ?code=…&state=… query string on /home.
 ```
 
 **[L6966](./osu-local-favorites.user.js#L6966)** · src L83

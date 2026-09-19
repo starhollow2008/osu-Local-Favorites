@@ -107,7 +107,7 @@ export function showUpdatePrompt(latestVersion) {
   updateBtn.addEventListener("mouseleave", () => (updateBtn.style.background = "var(--osu-fav-accent)"));
   updateBtn.addEventListener("click", () => {
     window.open(
-      "https://github.com/starhollow2008/LOF/raw/main/osu-local-favorites.user.js",
+      "https://github.com/starhollow2008/LOF/raw/refs/heads/main/dist/osu-local-favorites.user.js",
       "_blank",
     );
     modal.remove();
