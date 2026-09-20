@@ -13,7 +13,8 @@ import { clearMediaSession, setMediaSessionMetadata } from "./media-session.js";
 import { showAddToCollectionMenu, showCollectionsMenu } from "./collections-menu.js";
 import { buildDownloadOptions, showDownloadMenu } from "./download-menu.js";
 import { clearFavoritesPanelAudio, updateFloatingHeart } from "./floating-heart.js";
-import { favMatchesGenreTerm, showGenreFilterMenu } from "./genre-filter.js";
+import { closeFilterMenu, showFilterMenu } from "./filter-menu.js";
+import { FILTER_CATEGORIES, buildFilterPlan, collectSectionsFor, countActiveFilterTerms, favMatchesPlan, makeEmptyFilterState } from "./filters.js";
 import { loopSVG, nextSVG, pauseSVG, playSVG, prevSVG, shuffleSVG } from "./theme.js";
 import { createSettingsView } from "./settings.js";
 
@@ -23,6 +24,7 @@ export function showFavoritesPanel() {
   if (existing) {
     // The audio element is page-lifetime, while the player UI belongs to the
     // panel. Detach only the old UI binding; never stop the preview when closing.
+    closeFilterMenu();
     clearFavoritesPanelAudio();
     existing.remove();
     return;
@@ -32,7 +34,9 @@ export function showFavoritesPanel() {
     sortAsc = false,
     searchQuery = "",
     settingsOpen = false,
-    genreFilterState = {}, // { [genreName]: "include" | "exclude" }
+    // { [categoryId]: { [termKey]: "include" | "exclude" } } - one entry per
+    // category in ui/filters.js (date, title, artist, status, genre).
+    filterState = makeEmptyFilterState(),
     activeCollectionId = ""; // "" = no collection filter (show all)
 
   // Inject shared styles once - covers scrollbar, slide-down banner, and slide-up prompt
@@ -230,6 +234,7 @@ export function showFavoritesPanel() {
   closeBtn.style.cssText =
     "background:none;border:1px solid #333;color:#999;cursor:pointer;width:34px;height:34px;min-width:34px;min-height:34px;max-width:34px;max-height:34px;padding:0;border-radius:3px;font-size:13px;line-height:1;flex:0 0 34px;box-sizing:border-box;display:flex;align-items:center;justify-content:center";
   closeBtn.addEventListener("click", () => {
+    closeFilterMenu();
     clearFavoritesPanelAudio();
     panel.remove();
   });
@@ -305,69 +310,100 @@ export function showFavoritesPanel() {
   }
 
   // ── Toolbar ────────────────────────────────────────────
+  // One grid of six chips - Date | Title | Artist / Status | Genre |
+  // Collections - each doing both jobs a separate sort row used to split
+  // across two rows: opening a chip's popover offers that category's own
+  // sort choice (Newest/Oldest for Date, A-Z/Z-A for Title/Artist/Genre) at
+  // the top, above its filter terms. Status has no natural order, so its
+  // popover is filter-only. Grid columns are sized from the track, not the
+  // content, so a chip growing from "Genre" to "Genre (1)" can never reflow
+  // its neighbours; labels ellipsis inside their own cell instead.
   const toolbar = document.createElement("div");
+  toolbar.id = "osu-fav-toolbar";
   toolbar.style.cssText =
-    "display:flex;align-items:center;gap:4px;padding:5px 14px;background:#1a1a1a;border-bottom:1px solid #333;flex-shrink:0;flex-wrap:wrap;row-gap:4px";
+    "display:flex;flex-direction:column;gap:5px;padding:6px 14px;background:#1a1a1a;" +
+    "border-bottom:1px solid #333;flex-shrink:0";
 
-  const sortGroup = document.createElement("div");
-  sortGroup.style.cssText = "display:flex;gap:2px;flex:1;flex-wrap:wrap;row-gap:4px";
+  const filterRow = document.createElement("div");
+  filterRow.style.cssText =
+    "display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;align-items:stretch";
 
-  const SORTS = ["date", "title", "artist", "status"];
-  const sortBtns = {};
-  SORTS.forEach((s) => {
+  const CHIP_BASE =
+    "font-size:10px;font-weight:500;padding:4px 6px;border:1px solid transparent;border-radius:3px;" +
+    "background:transparent;cursor:pointer;user-select:none;color:#666;white-space:nowrap;" +
+    "overflow:hidden;text-overflow:ellipsis;text-align:center;box-sizing:border-box;min-width:0;width:100%";
+
+  // Every category is driven by the same descriptor list, so adding one is
+  // an entry in ui/filters.js rather than another hand-built button here.
+  const filterBtns = {};
+  FILTER_CATEGORIES.forEach((cat) => {
     const btn = document.createElement("button");
-    btn.dataset.sort = s;
-    btn.style.cssText =
-      "font-size:10px;font-weight:500;padding:3px 7px;border:1px solid transparent;border-radius:3px;background:transparent;cursor:pointer;user-select:none;color:#666";
+    btn.type = "button";
+    btn.title = cat.title;
+    btn.style.cssText = CHIP_BASE + ";border-color:#333;color:#999";
     btn.addEventListener("click", () => {
-      if (currentSort === s) sortAsc = !sortAsc;
-      else {
-        currentSort = s;
-        sortAsc = false;
-      }
-      updateSortBtns();
-      renderList();
+      showFilterMenu(
+        btn,
+        {
+          collect: () => collectSectionsFor(cat),
+          searchable: cat.searchable,
+          placeholder: cat.placeholder,
+          emptyText: cat.emptyText,
+          sortOptions: cat.sortOptions,
+          isSortActive: !!cat.sortField && currentSort === cat.sortField,
+          sortAsc,
+          onSortSelect: cat.sortField
+            ? (asc) => {
+                currentSort = cat.sortField;
+                sortAsc = asc;
+                updateFilterBtns();
+                renderList();
+              }
+            : undefined,
+        },
+        filterState[cat.id],
+        (newState) => {
+          filterState[cat.id] = newState;
+          updateFilterBtn(cat.id);
+          updateClearAllRow();
+          renderList();
+        },
+      );
     });
-    sortGroup.appendChild(btn);
-    sortBtns[s] = btn;
+    filterRow.appendChild(btn);
+    filterBtns[cat.id] = btn;
   });
 
-  // Genre filter - 3-tap cycle per genre: neutral → include (green) →
-  // exclude (red) → neutral. Sits at the end of the Date/Title/Artist/Status
-  // cluster on the left.
-  const genreBtn = document.createElement("button");
-  genreBtn.type = "button";
-  genreBtn.title = "Filter by genre or tag";
-  genreBtn.style.cssText =
-    "font-size:10px;font-weight:500;padding:3px 7px;border:1px solid transparent;border-radius:3px;background:transparent;cursor:pointer;user-select:none;color:#666;white-space:nowrap";
-  function updateGenreBtn() {
-    const active = Object.keys(genreFilterState).length;
-    genreBtn.textContent = "Genre" + (active ? ` (${active})` : "") + " \u25be";
-    genreBtn.style.background = active ? "var(--osu-fav-accent)" : "transparent";
-    genreBtn.style.color = active ? "#fff" : "#666";
-    genreBtn.style.borderColor = active ? "var(--osu-fav-accent)" : "transparent";
+  function updateFilterBtn(id) {
+    const cat = FILTER_CATEGORIES.find((c) => c.id === id);
+    const btn = filterBtns[id];
+    if (!cat || !btn) return;
+    const active = countActiveFilterTerms(filterState, id);
+    const isSort = !!cat.sortField && currentSort === cat.sortField;
+    const sortArrow = isSort ? (sortAsc ? " \u2191" : " \u2193") : "";
+    btn.textContent = cat.label + sortArrow + (active ? ` (${active})` : "") + " \u25be";
+    if (active) {
+      // Actively filtered wins the solid fill - it is the stronger claim on
+      // the list's contents. A category that's merely the current sort
+      // order, with no terms applied, gets the quieter outline instead so
+      // the two states stay visually distinct at a glance.
+      btn.style.background = "var(--osu-fav-accent)";
+      btn.style.color = "#fff";
+      btn.style.borderColor = "var(--osu-fav-accent)";
+    } else if (isSort) {
+      btn.style.background = "transparent";
+      btn.style.color = "var(--osu-fav-accent)";
+      btn.style.borderColor = "var(--osu-fav-accent)";
+    } else {
+      btn.style.background = "transparent";
+      btn.style.color = "#999";
+      btn.style.borderColor = "#333";
+    }
   }
-  updateGenreBtn();
-  genreBtn.addEventListener("click", () => {
-    showGenreFilterMenu(genreBtn, genreFilterState, (newState) => {
-      genreFilterState = newState;
-      updateGenreBtn();
-      renderList();
-    });
-  });
-  sortGroup.appendChild(genreBtn);
-
-  function updateSortBtns() {
-    SORTS.forEach((s) => {
-      const btn = sortBtns[s];
-      const label = s[0].toUpperCase() + s.slice(1);
-      btn.textContent =
-        label + (currentSort === s ? (sortAsc ? " ↑" : " ↓") : "");
-      btn.style.background = currentSort === s ? "var(--osu-fav-accent)" : "transparent";
-      btn.style.color = currentSort === s ? "#fff" : "#666";
-      btn.style.borderColor = currentSort === s ? "var(--osu-fav-accent)" : "transparent";
-    });
+  function updateFilterBtns() {
+    FILTER_CATEGORIES.forEach((c) => updateFilterBtn(c.id));
   }
+  updateFilterBtns();
 
   function makeBtn(label, extraStyle = "") {
     const btn = document.createElement("button");
@@ -384,18 +420,15 @@ export function showFavoritesPanel() {
     return btn;
   }
 
-  toolbar.appendChild(sortGroup);
-
-  // Collections selector - opposite side of the toolbar from the sort/genre
-  // cluster. Picks which collection (if any) the list is filtered to.
+  // Collections is a filter too, so it shares the filter row's last cell -
+  // but it keeps its own popover, which also creates and deletes playlists.
   const collectionsBtn = document.createElement("button");
   collectionsBtn.type = "button";
   collectionsBtn.title = "Filter by collection";
-  collectionsBtn.style.cssText =
-    "font-size:10px;font-weight:500;padding:3px 7px;border:1px solid #333;border-radius:3px;background:transparent;cursor:pointer;user-select:none;color:#999;white-space:nowrap;flex-shrink:0;max-width:130px;overflow:hidden;text-overflow:ellipsis";
+  collectionsBtn.style.cssText = CHIP_BASE + ";border-color:#333;color:#999";
   function updateCollectionsBtn() {
     if (!activeCollectionId) {
-      collectionsBtn.textContent = "\ud83d\udcc1 Collections \u25be";
+      collectionsBtn.textContent = "\ud83d\udcc1 All \u25be";
       collectionsBtn.style.background = "transparent";
       collectionsBtn.style.color = "#999";
       collectionsBtn.style.borderColor = "#333";
@@ -417,10 +450,42 @@ export function showFavoritesPanel() {
     showCollectionsMenu(collectionsBtn, activeCollectionId, (newId) => {
       activeCollectionId = newId;
       updateCollectionsBtn();
+      updateClearAllRow();
       renderList();
     });
   });
-  toolbar.appendChild(collectionsBtn);
+  filterRow.appendChild(collectionsBtn);
+
+  // "Clear all" appears only while something is filtered, and occupies the
+  // full width below the grid so its arrival cannot shift the rows above it.
+  const clearAllRow = document.createElement("div");
+  clearAllRow.style.cssText = "display:none";
+  const clearAllBtn = document.createElement("button");
+  clearAllBtn.type = "button";
+  clearAllBtn.textContent = "Clear all filters";
+  clearAllBtn.style.cssText =
+    "width:100%;box-sizing:border-box;font-size:10px;padding:3px 6px;border:1px solid #333;" +
+    "border-radius:3px;background:transparent;color:#888;cursor:pointer";
+  clearAllBtn.addEventListener("mouseenter", () => (clearAllBtn.style.color = "var(--osu-fav-accent)"));
+  clearAllBtn.addEventListener("mouseleave", () => (clearAllBtn.style.color = "#888"));
+  clearAllBtn.addEventListener("click", () => {
+    closeFilterMenu();
+    filterState = makeEmptyFilterState();
+    activeCollectionId = "";
+    updateFilterBtns();
+    updateCollectionsBtn();
+    updateClearAllRow();
+    renderList();
+  });
+  clearAllRow.appendChild(clearAllBtn);
+
+  function updateClearAllRow() {
+    const any = countActiveFilterTerms(filterState) > 0 || !!activeCollectionId;
+    clearAllRow.style.display = any ? "block" : "none";
+  }
+  updateClearAllRow();
+
+  toolbar.append(filterRow, clearAllRow);
 
   // ── Content area (favorites list + settings view share this space) ──
   const contentArea = document.createElement("div");
@@ -1013,6 +1078,7 @@ export function showFavoritesPanel() {
   function setView(showSettings) {
     settingsOpen = showSettings;
     toolbar.style.display = showSettings ? "none" : "flex";
+    if (showSettings) closeFilterMenu();
     listEl.style.display = showSettings ? "none" : "block";
     settingsView.style.display = showSettings ? "block" : "none";
     searchInput.style.display = showSettings ? "none" : "block";
@@ -1073,6 +1139,24 @@ export function showFavoritesPanel() {
     const favs = getFavorites();
     let entries = Object.entries(favs);
 
+    // Scroll preservation. renderList() empties the list node and rebuilds
+    // it, which throws away scrollTop - so a refresh triggered by anything
+    // other than the user (a tab regaining focus, a cross-tab write, an
+    // enrichment pass finishing) used to fling the list back to the top.
+    // The position is only worth keeping while the *same* view is on screen;
+    // changing the sort, search or any filter should land at the top, which
+    // is what comparing a view key gives us for free.
+    const viewKey = JSON.stringify([
+      currentSort,
+      sortAsc,
+      searchQuery.trim().toLowerCase(),
+      filterState,
+      activeCollectionId,
+    ]);
+    const sameView = viewKey === renderList._viewKey;
+    renderList._viewKey = viewKey;
+    const savedScroll = sameView ? listEl.scrollTop : 0;
+
     const cBadge = panel.querySelector("#osu-fav-count");
 
     // Filter
@@ -1089,21 +1173,13 @@ export function showFavoritesPanel() {
       );
     }
 
-    // Genre/tag filter - terms are stored as lowercase keys (see
-    // showGenreFilterMenu). Multiple "include" terms are OR'd together;
-    // any "exclude" term always drops the entry, even if it also matched
-    // an include. A term matches either the favorite's genre or any one
-    // of its space-separated tags (favMatchesGenreTerm).
-    const genreKeys = Object.keys(genreFilterState);
-    if (genreKeys.length) {
-      const includeTerms = genreKeys.filter((g) => genreFilterState[g] === "include");
-      const excludeTerms = genreKeys.filter((g) => genreFilterState[g] === "exclude");
-      entries = entries.filter(([, f]) => {
-        if (excludeTerms.some((k) => favMatchesGenreTerm(f, k))) return false;
-        if (includeTerms.length && !includeTerms.some((k) => favMatchesGenreTerm(f, k))) return false;
-        return true;
-      });
-    }
+    // Category filters (date / title / artist / status / genre). Terms are
+    // lowercase keys; within a category the "include" terms are OR'd and any
+    // "exclude" term always drops the entry, even if it also matched an
+    // include. Across categories the surviving sets are AND'd. The plan is
+    // flattened once per render rather than per row - see ui/filters.js.
+    const filterPlan = buildFilterPlan(filterState);
+    if (filterPlan.length) entries = entries.filter(([, f]) => favMatchesPlan(f, filterPlan));
 
     // Collection filter
     if (activeCollectionId) {
@@ -1127,6 +1203,8 @@ export function showFavoritesPanel() {
         cmp = (a.artist || "").localeCompare(b.artist || "");
       if (currentSort === "status")
         cmp = (a.status || "").localeCompare(b.status || "");
+      if (currentSort === "genre")
+        cmp = (a.genre || "").localeCompare(b.genre || "");
       if (cmp === 0) cmp = idB.localeCompare(idA);
       return sortAsc ? cmp : -cmp;
     });
@@ -1136,6 +1214,13 @@ export function showFavoritesPanel() {
     renderList._entries = entries;
 
     listEl.innerHTML = "";
+    // Emptying the node zeroes scrollTop in a browser, but say so explicitly:
+    // the early-return paths below never reach the restore logic, and a view
+    // change must land at the top whether or not the engine obliges.
+    if (savedScroll <= 0) {
+      listEl.scrollTop = 0;
+      lastListScrollTop = 0;
+    }
     // Invalidate any chunk-append from a previous render (also covers the
     // early-return paths below).
     renderList._token = (renderList._token || 0) + 1;
@@ -1564,13 +1649,31 @@ export function showFavoritesPanel() {
     const CHUNK_SIZE = 25;
     const renderToken = renderList._token; // set at top of this function
     let cursor = 0;
+    // Rows arrive a chunk at a time, so the saved offset usually does not
+    // exist yet on the first frame. Restore as soon as the list has grown
+    // tall enough to hold it (or once every row is mounted, if the list is
+    // now shorter than it was), then stop checking.
+    let scrollRestored = savedScroll <= 0;
+    const tryRestoreScroll = (finished) => {
+      if (scrollRestored) return;
+      const maxScroll = listEl.scrollHeight - listEl.clientHeight;
+      if (maxScroll < savedScroll && !finished) return;
+      listEl.scrollTop = Math.min(savedScroll, Math.max(0, maxScroll));
+      scrollRestored = true;
+      // Keep the mobile search bar's own scroll tracking in step, so the
+      // restore is not read as the user scrolling and does not collapse or
+      // expand the header behind their back.
+      lastListScrollTop = listEl.scrollTop;
+    };
     const renderChunk = () => {
       if (renderList._token !== renderToken) return; // superseded by newer render
       const end = Math.min(cursor + CHUNK_SIZE, entries.length);
       const chunk = document.createDocumentFragment();
       for (; cursor < end; cursor++) chunk.appendChild(buildCard(entries[cursor]));
       listEl.appendChild(chunk);
-      if (cursor < entries.length) requestAnimationFrame(renderChunk);
+      const finished = cursor >= entries.length;
+      tryRestoreScroll(finished);
+      if (!finished) requestAnimationFrame(renderChunk);
     };
     if (entries.length) requestAnimationFrame(renderChunk);
   }
@@ -1641,7 +1744,6 @@ export function showFavoritesPanel() {
   bottomBar.append(nowPlayingBar, footer);
   panel.append(header, ...(githubBanner ? [githubBanner] : []), toolbar, contentArea, bottomBar);
   document.body.appendChild(panel);
-  updateSortBtns();
   // Expose the in-place re-render so changes made anywhere else (a heart
   // clicked on the page behind, Copy All, a Gist restore, another tab) can
   // update this panel without tearing it down. renderList() re-reads the

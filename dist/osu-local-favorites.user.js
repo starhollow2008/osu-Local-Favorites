@@ -3,7 +3,7 @@
 // @namespace    https://github.com/starhollow2008/osu-Local-Favorites
 // @updateURL    https://github.com/starhollow2008/osu-Local-Favorites/raw/refs/heads/main/dist/osu-local-favorites.user.js
 // @downloadURL  https://github.com/starhollow2008/osu-Local-Favorites/raw/refs/heads/main/dist/osu-local-favorites.user.js
-// @version      5.8.4
+// @version      5.9.1
 // @icon         https://github.com/starhollow2008/osu-Local-Favorites/blob/main/icons/icon48.png?raw=true
 // @description  Store osu! beatmap favorites locally instead of on osu!'s servers. Works without sign-in.
 // @author       Starhollow2008 | FlareonGhh
@@ -44,26 +44,28 @@
  *   12. ui/audio-player.js          (src/ui/audio-player.js)
  *   13. ui/download-menu.js         (src/ui/download-menu.js)
  *   14. ui/genre-filter.js          (src/ui/genre-filter.js)
- *   15. ui/collections-menu.js      (src/ui/collections-menu.js)
- *   16. api/gist-backup.js          (src/api/gist-backup.js)
- *   17. api/osu-api.js              (src/api/osu-api.js)
- *   18. data/beatmap-extraction.js  (src/data/beatmap-extraction.js)
- *   19. data/favorite-detection.js  (src/data/favorite-detection.js)
- *   20. ui/heart-visual.js          (src/ui/heart-visual.js)
- *   21. data/enrichment.js          (src/data/enrichment.js)
- *   22. data/reenrichment.js        (src/data/reenrichment.js)
- *   23. data/toggle-favorite.js     (src/data/toggle-favorite.js)
- *   24. ui/copy-all-button.js       (src/ui/copy-all-button.js)
- *   25. ui/floating-heart.js        (src/ui/floating-heart.js)
- *   26. ui/settings.js              (src/ui/settings.js)
- *   27. ui/main-panel.js            (src/ui/main-panel.js)
- *   28. ui/menu-commands.js         (src/ui/menu-commands.js)
- *   29. ui/guest-fallback.js        (src/ui/guest-fallback.js)
- *   30. ui/guest-downloads.js       (src/ui/guest-downloads.js)
- *   31. core/toast.js               (src/core/toast.js)
- *   32. data/version-check.js       (src/data/version-check.js)
- *   33. ui/update-prompt.js         (src/ui/update-prompt.js)
- *   34. core/init.js                (src/core/init.js)
+ *   15. ui/filter-menu.js           (src/ui/filter-menu.js)
+ *   16. ui/filters.js               (src/ui/filters.js)
+ *   17. ui/collections-menu.js      (src/ui/collections-menu.js)
+ *   18. api/gist-backup.js          (src/api/gist-backup.js)
+ *   19. api/osu-api.js              (src/api/osu-api.js)
+ *   20. data/beatmap-extraction.js  (src/data/beatmap-extraction.js)
+ *   21. data/favorite-detection.js  (src/data/favorite-detection.js)
+ *   22. ui/heart-visual.js          (src/ui/heart-visual.js)
+ *   23. data/enrichment.js          (src/data/enrichment.js)
+ *   24. data/reenrichment.js        (src/data/reenrichment.js)
+ *   25. data/toggle-favorite.js     (src/data/toggle-favorite.js)
+ *   26. ui/copy-all-button.js       (src/ui/copy-all-button.js)
+ *   27. ui/floating-heart.js        (src/ui/floating-heart.js)
+ *   28. ui/settings.js              (src/ui/settings.js)
+ *   29. ui/main-panel.js            (src/ui/main-panel.js)
+ *   30. ui/menu-commands.js         (src/ui/menu-commands.js)
+ *   31. ui/guest-fallback.js        (src/ui/guest-fallback.js)
+ *   32. ui/guest-downloads.js       (src/ui/guest-downloads.js)
+ *   33. core/toast.js               (src/core/toast.js)
+ *   34. data/version-check.js       (src/data/version-check.js)
+ *   35. ui/update-prompt.js         (src/ui/update-prompt.js)
+ *   36. core/init.js                (src/core/init.js)
  */
 (() => {
   "use strict";
@@ -401,6 +403,28 @@
     _favsCache = nextFavorites && typeof nextFavorites === "object" ? nextFavorites : null;
     _lastMembershipSignature = null;
     notifyFavoritesChanged();
+  }
+
+  function reloadFavoritesQuietly() {
+    _favsCache = null;
+    const favs = getFavorites();
+    _lastMembershipSignature = membershipSignature(favs);
+    return favs;
+  }
+
+  function favoritesFingerprint(favs) {
+    const store = favs || getFavorites();
+    let count = 0;
+    let hash = 0;
+    for (const id in store) {
+      count++;
+      const f = store[id] || {};
+      hash = (hash * 31 + (Number(id) || 0)) | 0;
+      hash = (hash * 31 + (f.title ? f.title.length : 0)) | 0;
+      hash = (hash * 31 + (f.artist ? f.artist.length : 0)) | 0;
+      hash = (hash * 31 + (f.metadata_enriched ? 1 : 0)) | 0;
+    }
+    return count + ":" + hash;
   }
 
   window.addEventListener("storage", (e) => {
@@ -1834,26 +1858,24 @@
       .map((t) => normalizeTagText(t.trim()).toLowerCase())
       .includes(key);
   }
+  // ━━━━━━━━━━ src/ui/filter-menu.js ━━━━━━━━━━
 
-  function showGenreFilterMenu(anchorEl, currentState, onApply) {
-    const existing = document.getElementById("osu-fav-genre-menu");
+  const MENU_ID = "osu-fav-filter-menu";
+
+  const DEFAULT_CAP_UNFILTERED = 60;
+  const DEFAULT_CAP_FILTERED = 150;
+
+  function showFilterMenu(anchorEl, config, currentState, onApply) {
+    const existing = document.getElementById(MENU_ID);
     const reopening = existing && existing._anchor === anchorEl;
     if (existing && existing._cleanup) existing._cleanup();
     if (reopening) return;
 
     const state = Object.assign({}, currentState);
-
-    const favs = getFavorites();
-    const { genreCounts, tagCounts } = collectGenreAndTagTerms(favs);
-    let genreList = Array.from(genreCounts.entries())
-      .map(([key, v]) => ({ key, display: v.display, count: v.count }))
-      .sort((a, b) => a.display.localeCompare(b.display));
-    let tagList = Array.from(tagCounts.entries())
-      .map(([key, v]) => ({ key, display: v.display, count: v.count }))
-      .sort((a, b) => b.count - a.count || a.display.localeCompare(b.display));
+    let sections = config.collect() || [];
 
     const menu = document.createElement("div");
-    menu.id = "osu-fav-genre-menu";
+    menu.id = MENU_ID;
     menu._anchor = anchorEl;
     menu.style.cssText =
       "position:fixed;z-index:100002;min-width:190px;max-width:240px;max-height:360px;overflow-y:auto;" +
@@ -1882,18 +1904,65 @@
 
     const hint = document.createElement("div");
     hint.style.cssText = "font-size:9px;color:#666;padding:2px 6px 6px;line-height:1.4";
-    hint.textContent = "Tap: include (green) → exclude (red) → off";
+    hint.textContent = config.hint || "Tap: include (green) \u2192 exclude (red) \u2192 off";
     menu.appendChild(hint);
 
-    const searchBox = document.createElement("input");
-    searchBox.type = "text";
-    searchBox.placeholder = "Filter list...";
-    searchBox.style.cssText =
-      "width:100%;box-sizing:border-box;background:#111;border:1px solid #333;border-radius:3px;color:#ddd;" +
-      "font-size:10px;padding:4px 6px;outline:none;margin-bottom:4px";
-    searchBox.addEventListener("click", (e) => e.stopPropagation());
-    searchBox.addEventListener("keydown", (e) => e.stopPropagation());
-    menu.appendChild(searchBox);
+    if (config.sortOptions && config.sortOptions.length && config.onSortSelect) {
+      const sortLabel = document.createElement("div");
+      sortLabel.style.cssText =
+        "font-size:9px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.03em;padding:0 6px 3px";
+      sortLabel.textContent = "Sort";
+      menu.appendChild(sortLabel);
+
+      const sortRow = document.createElement("div");
+      sortRow.style.cssText = "display:flex;gap:4px;padding:0 2px 6px";
+      const sortBtnEls = [];
+      const paintSort = () => {
+        sortBtnEls.forEach((b) => {
+          const on = config.isSortActive && config.sortAsc === b._asc;
+          b.style.borderColor = on ? "var(--osu-fav-accent)" : "#333";
+          b.style.background = on ? "var(--osu-fav-accent)" : "transparent";
+          b.style.color = on ? "#fff" : "#999";
+        });
+      };
+      config.sortOptions.forEach((opt) => {
+        const sBtn = document.createElement("button");
+        sBtn.type = "button";
+        sBtn._asc = opt.asc;
+        sBtn.textContent = opt.label;
+        sBtn.style.cssText =
+          "flex:1;min-width:0;font-size:10px;font-weight:500;padding:4px 4px;border-radius:3px;" +
+          "cursor:pointer;box-sizing:border-box;border:1px solid #333;background:transparent;color:#999";
+        sBtn.addEventListener("click", () => {
+          if (config.isSortActive && config.sortAsc === opt.asc) return;
+          config.isSortActive = true;
+          config.sortAsc = opt.asc;
+          paintSort();
+          config.onSortSelect(opt.asc);
+        });
+        sortBtnEls.push(sBtn);
+        sortRow.appendChild(sBtn);
+      });
+      paintSort();
+      menu.appendChild(sortRow);
+
+      const sortDivider = document.createElement("div");
+      sortDivider.style.cssText = "height:1px;background:#333;margin:0 2px 6px";
+      menu.appendChild(sortDivider);
+    }
+
+    let searchBox = null;
+    if (config.searchable) {
+      searchBox = document.createElement("input");
+      searchBox.type = "text";
+      searchBox.placeholder = config.placeholder || "Filter list...";
+      searchBox.style.cssText =
+        "width:100%;box-sizing:border-box;background:#111;border:1px solid #333;border-radius:3px;color:#ddd;" +
+        "font-size:10px;padding:4px 6px;outline:none;margin-bottom:4px";
+      searchBox.addEventListener("click", (e) => e.stopPropagation());
+      searchBox.addEventListener("keydown", (e) => e.stopPropagation());
+      menu.appendChild(searchBox);
+    }
 
     const rowsWrap = document.createElement("div");
     menu.appendChild(rowsWrap);
@@ -1909,7 +1978,7 @@
       row.type = "button";
       const sty = styleForState(state[term.key]);
       row.style.cssText =
-        `display:flex;justify-content:space-between;align-items:center;gap:6px;width:100%;text-align:left;` +
+        "display:flex;justify-content:space-between;align-items:center;gap:6px;width:100%;text-align:left;" +
         `margin:2px 0;padding:5px 8px;font-size:11px;border:1px solid ${sty.border};border-radius:3px;` +
         `background:${sty.bg};color:${sty.color};cursor:pointer;box-sizing:border-box`;
       const label = document.createElement("span");
@@ -1933,71 +2002,63 @@
       return row;
     }
 
-    const MAX_UNFILTERED_TAGS = 60;
-    const MAX_FILTERED_TAGS = 150;
-
     function renderRows(query) {
       const q = (query || "").toLowerCase();
-      const filteredGenres = q ? genreList.filter((t) => t.display.toLowerCase().includes(q)) : genreList;
-      const filteredTagsAll = q ? tagList.filter((t) => t.display.toLowerCase().includes(q)) : tagList;
-      const cap = q ? MAX_FILTERED_TAGS : MAX_UNFILTERED_TAGS;
-      const shownTags = filteredTagsAll.slice(0, cap);
-      const hiddenCount = filteredTagsAll.length - shownTags.length;
-
       const frag = document.createDocumentFragment();
+      let shownAny = false;
+      let hiddenTotal = 0;
 
-      if (filteredGenres.length === 0 && shownTags.length === 0) {
+      sections.forEach((section) => {
+        const all = q
+          ? section.terms.filter((t) => t.display.toLowerCase().includes(q))
+          : section.terms;
+        const cap = section.cap === false
+          ? Infinity
+          : q
+            ? section.capFiltered || DEFAULT_CAP_FILTERED
+            : section.capUnfiltered || DEFAULT_CAP_UNFILTERED;
+        const shown = all.length > cap ? all.slice(0, cap) : all;
+        hiddenTotal += all.length - shown.length;
+        if (!shown.length) return;
+        shownAny = true;
+        if (section.label) {
+          const label = document.createElement("div");
+          label.style.cssText =
+            "font-size:9px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.03em;padding:5px 8px 2px";
+          label.textContent = section.label;
+          frag.appendChild(label);
+        }
+        shown.forEach((t) => frag.appendChild(makeRow(t)));
+      });
+
+      if (!shownAny) {
         const empty = document.createElement("div");
         empty.style.cssText = "font-size:11px;color:#666;padding:8px 10px";
-        empty.textContent = q ? "No matches." : "No favorites to filter yet.";
+        empty.textContent = q ? "No matches." : config.emptyText || "Nothing to filter yet.";
         frag.appendChild(empty);
-      } else {
-        if (filteredGenres.length) {
-          const label = document.createElement("div");
-          label.style.cssText = "font-size:9px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.03em;padding:4px 8px 2px";
-          label.textContent = "Genres";
-          frag.appendChild(label);
-          filteredGenres.forEach((t) => frag.appendChild(makeRow(t)));
-        }
-        if (shownTags.length) {
-          const label = document.createElement("div");
-          label.style.cssText = "font-size:9px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.03em;padding:6px 8px 2px";
-          label.textContent = "Tags";
-          frag.appendChild(label);
-          shownTags.forEach((t) => frag.appendChild(makeRow(t)));
-        }
-        if (hiddenCount > 0) {
-          const note = document.createElement("div");
-          note.style.cssText = "font-size:9px;color:#555;padding:5px 8px;line-height:1.4";
-          note.textContent = `+${hiddenCount} more tag${hiddenCount === 1 ? "" : "s"} - type to narrow`;
-          frag.appendChild(note);
-        }
+      } else if (hiddenTotal > 0) {
+        const note = document.createElement("div");
+        note.style.cssText = "font-size:9px;color:#555;padding:5px 8px;line-height:1.4";
+        note.textContent = `+${hiddenTotal} more - type to narrow`;
+        frag.appendChild(note);
       }
 
       rowsWrap.innerHTML = "";
       rowsWrap.appendChild(frag);
     }
-    renderRows("");
-    searchBox.addEventListener("input", () => renderRows(searchBox.value.trim()));
-    menu._refreshTerms = () => {
-      const latest = collectGenreAndTagTerms(getFavorites());
-      genreList = Array.from(latest.genreCounts.entries())
-        .map(([key, v]) => ({ key, display: v.display, count: v.count }))
-        .sort((a, b) => a.display.localeCompare(b.display));
-      tagList = Array.from(latest.tagCounts.entries())
-        .map(([key, v]) => ({ key, display: v.display, count: v.count }))
-        .sort((a, b) => b.count - a.count || a.display.localeCompare(b.display));
-      renderRows(searchBox.value.trim());
-    };
 
-    if (genreList.length || tagList.length) {
+    renderRows("");
+    if (searchBox) searchBox.addEventListener("input", () => renderRows(searchBox.value.trim()));
+
+    const hasTerms = sections.some((s) => s.terms && s.terms.length);
+    if (hasTerms) {
       const divider = document.createElement("div");
       divider.style.cssText = "height:1px;background:#333;margin:4px 2px";
       menu.appendChild(divider);
 
       const clearBtn = document.createElement("button");
       clearBtn.type = "button";
-      clearBtn.textContent = "Clear filters";
+      clearBtn.textContent = config.clearLabel || "Clear this filter";
       clearBtn.style.cssText =
         "display:block;width:100%;text-align:center;padding:5px 8px;font-size:10px;box-sizing:border-box;" +
         "border:1px solid #333;border-radius:3px;background:transparent;color:#888;cursor:pointer";
@@ -2016,7 +2077,7 @@
     const menuRect = menu.getBoundingClientRect();
     let top = rect.bottom + 4;
     if (top + menuRect.height > window.innerHeight) top = Math.max(8, rect.top - menuRect.height - 4);
-    let left = Math.max(8, Math.min(rect.left, window.innerWidth - menuRect.width - 8));
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuRect.width - 8));
     menu.style.top = top + "px";
     menu.style.left = left + "px";
 
@@ -2025,6 +2086,284 @@
     window.addEventListener("scroll", onWindowScroll, true);
   }
 
+  function closeFilterMenu() {
+    const existing = document.getElementById(MENU_ID);
+    if (existing && existing._cleanup) existing._cleanup();
+  }
+  // ━━━━━━━━━━ src/ui/filters.js ━━━━━━━━━━
+
+  const DAY_MS = 86400000;
+
+  const DATE_RANGES = [
+    { key: "today", display: "Today", maxDays: 1 },
+    { key: "7d", display: "Last 7 days", maxDays: 7 },
+    { key: "30d", display: "Last 30 days", maxDays: 30 },
+    { key: "90d", display: "Last 90 days", maxDays: 90 },
+    { key: "365d", display: "Last year", maxDays: 365 },
+    { key: "older", display: "Older than a year", maxDays: Infinity },
+    { key: "undated", display: "No date recorded", maxDays: Infinity },
+  ];
+
+  function favAgeDays(f) {
+    const t = Date.parse((f && f.favourited_at) || "");
+    if (!isFinite(t)) return null;
+    return (Date.now() - t) / DAY_MS;
+  }
+
+  function dateMatches(f, key) {
+    const age = favAgeDays(f);
+    if (age === null) return key === "undated";
+    if (key === "undated") return false;
+    if (key === "older") return age > 365;
+    const range = DATE_RANGES.find((r) => r.key === key);
+    return !!range && age <= range.maxDays;
+  }
+
+  function collectDateTerms(favs) {
+    const counts = Object.create(null);
+    DATE_RANGES.forEach((r) => (counts[r.key] = 0));
+    Object.values(favs).forEach((f) => {
+      DATE_RANGES.forEach((r) => {
+        if (dateMatches(f, r.key)) counts[r.key]++;
+      });
+    });
+    const terms = DATE_RANGES.filter((r) => counts[r.key] > 0).map((r) => ({
+      key: r.key,
+      display: r.display,
+      count: counts[r.key],
+    }));
+    return [{ label: "Favorited", terms, cap: false }];
+  }
+
+  function titleBucketKey(f) {
+    const raw = ((f && f.title) || "").trim();
+    if (!raw) return "untitled";
+    const c = raw.normalize("NFKC").charAt(0).toUpperCase();
+    if (c >= "A" && c <= "Z") return c.toLowerCase();
+    if (c >= "0" && c <= "9") return "0-9";
+    return "other";
+  }
+
+  function titleBucketDisplay(key) {
+    if (key === "0-9") return "0-9";
+    if (key === "other") return "Other / non-Latin";
+    if (key === "untitled") return "No title yet";
+    return key.toUpperCase();
+  }
+
+  function titleMatches(f, key) {
+    return titleBucketKey(f) === key;
+  }
+
+  function collectTitleTerms(favs) {
+    const counts = new Map();
+    Object.values(favs).forEach((f) => {
+      const key = titleBucketKey(f);
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    const letters = [];
+    const extras = [];
+    counts.forEach((count, key) => {
+      const term = { key, display: titleBucketDisplay(key), count };
+      if (key.length === 1 && key >= "a" && key <= "z") letters.push(term);
+      else extras.push(term);
+    });
+    letters.sort((a, b) => a.key.localeCompare(b.key));
+    const order = { "0-9": 0, other: 1, untitled: 2 };
+    extras.sort((a, b) => (order[a.key] || 0) - (order[b.key] || 0));
+    return [{ label: "Starts with", terms: letters.concat(extras), cap: false }];
+  }
+
+  function artistKey(f) {
+    const raw = ((f && f.artist) || "").trim();
+    return raw ? raw.toLowerCase() : "__unknown__";
+  }
+
+  function artistMatches(f, key) {
+    return artistKey(f) === key;
+  }
+
+  function collectArtistTerms(favs) {
+    const counts = new Map();
+    Object.values(favs).forEach((f) => {
+      const key = artistKey(f);
+      const display = key === "__unknown__" ? "Unknown artist" : ((f.artist || "").trim());
+      const entry = counts.get(key) || { display, count: 0 };
+      entry.count++;
+      counts.set(key, entry);
+    });
+    const terms = Array.from(counts.entries())
+      .map(([key, v]) => ({ key, display: v.display, count: v.count }))
+      .sort((a, b) => b.count - a.count || a.display.localeCompare(b.display));
+    return [{ label: "Artists", terms }];
+  }
+
+  const STATUS_ORDER = [
+    "ranked",
+    "approved",
+    "qualified",
+    "loved",
+    "pending",
+    "wip",
+    "graveyard",
+  ];
+
+  function statusKey(f) {
+    const raw = ((f && f.status) || "").trim();
+    return raw ? raw.toLowerCase() : "__unknown__";
+  }
+
+  function statusMatches(f, key) {
+    return statusKey(f) === key;
+  }
+
+  function statusDisplay(key) {
+    if (key === "__unknown__") return "Unknown";
+    if (key === "wip") return "WIP";
+    return key.charAt(0).toUpperCase() + key.slice(1);
+  }
+
+  function collectStatusTerms(favs) {
+    const counts = new Map();
+    Object.values(favs).forEach((f) => {
+      const key = statusKey(f);
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    const terms = Array.from(counts.entries())
+      .map(([key, count]) => ({ key, display: statusDisplay(key), count }))
+      .sort((a, b) => {
+        const ra = STATUS_ORDER.indexOf(a.key);
+        const rb = STATUS_ORDER.indexOf(b.key);
+        return (ra === -1 ? 99 : ra) - (rb === -1 ? 99 : rb) || a.display.localeCompare(b.display);
+      });
+    return [{ label: "Ranking status", terms, cap: false }];
+  }
+
+  function collectGenreSections(favs) {
+    const { genreCounts, tagCounts } = collectGenreAndTagTerms(favs);
+    const genres = Array.from(genreCounts.entries())
+      .map(([key, v]) => ({ key, display: v.display, count: v.count }))
+      .sort((a, b) => a.display.localeCompare(b.display));
+    const tags = Array.from(tagCounts.entries())
+      .map(([key, v]) => ({ key, display: v.display, count: v.count }))
+      .sort((a, b) => b.count - a.count || a.display.localeCompare(b.display));
+    return [
+      { label: "Genres", terms: genres, cap: false },
+      { label: "Tags", terms: tags },
+    ];
+  }
+
+  const FILTER_CATEGORIES = [
+    {
+      id: "date",
+      label: "Date",
+      title: "Filter or sort by when it was favorited",
+      searchable: false,
+      emptyText: "No favorites to filter yet.",
+      collect: collectDateTerms,
+      matches: dateMatches,
+      sortField: "date",
+      sortOptions: [
+        { asc: false, label: "Newest" },
+        { asc: true, label: "Oldest" },
+      ],
+    },
+    {
+      id: "title",
+      label: "Title",
+      title: "Filter or sort by title",
+      searchable: false,
+      emptyText: "No favorites to filter yet.",
+      collect: collectTitleTerms,
+      matches: titleMatches,
+      sortField: "title",
+      sortOptions: [
+        { asc: true, label: "A-Z" },
+        { asc: false, label: "Z-A" },
+      ],
+    },
+    {
+      id: "artist",
+      label: "Artist",
+      title: "Filter or sort by artist",
+      searchable: true,
+      placeholder: "Filter artists...",
+      emptyText: "No artists yet - metadata is still filling in.",
+      collect: collectArtistTerms,
+      matches: artistMatches,
+      sortField: "artist",
+      sortOptions: [
+        { asc: true, label: "A-Z" },
+        { asc: false, label: "Z-A" },
+      ],
+    },
+    {
+      id: "status",
+      label: "Status",
+      title: "Filter by ranking status",
+      searchable: false,
+      emptyText: "No statuses yet - metadata is still filling in.",
+      collect: collectStatusTerms,
+      matches: statusMatches,
+    },
+    {
+      id: "genre",
+      label: "Genre",
+      title: "Filter or sort by genre or tag",
+      searchable: true,
+      placeholder: "Filter genres & tags...",
+      emptyText: "No favorites to filter yet.",
+      collect: collectGenreSections,
+      matches: favMatchesGenreTerm,
+      sortField: "genre",
+      sortOptions: [
+        { asc: true, label: "A-Z" },
+        { asc: false, label: "Z-A" },
+      ],
+    },
+  ];
+
+  function makeEmptyFilterState() {
+    const state = {};
+    FILTER_CATEGORIES.forEach((cat) => (state[cat.id] = {}));
+    return state;
+  }
+
+  function countActiveFilterTerms(state, categoryId) {
+    if (categoryId) return Object.keys((state && state[categoryId]) || {}).length;
+    return FILTER_CATEGORIES.reduce(
+      (n, cat) => n + Object.keys((state && state[cat.id]) || {}).length,
+      0,
+    );
+  }
+
+  function buildFilterPlan(state) {
+    const plan = [];
+    FILTER_CATEGORIES.forEach((cat) => {
+      const catState = (state && state[cat.id]) || {};
+      const include = [];
+      const exclude = [];
+      Object.keys(catState).forEach((key) => {
+        if (catState[key] === "exclude") exclude.push(key);
+        else include.push(key);
+      });
+      if (include.length || exclude.length) plan.push({ cat, include, exclude });
+    });
+    return plan;
+  }
+
+  function favMatchesPlan(f, plan) {
+    for (let i = 0; i < plan.length; i++) {
+      const { cat, include, exclude } = plan[i];
+      if (exclude.length && exclude.some((k) => cat.matches(f, k))) return false;
+      if (include.length && !include.some((k) => cat.matches(f, k))) return false;
+    }
+    return true;
+  }
+
+  function collectSectionsFor(cat) {
+    return cat.collect(getFavorites());
+  }
   // ━━━━━━━━━━ src/ui/collections-menu.js ━━━━━━━━━━
 
   function showCollectionsMenu(anchorEl, activeId, onSelect) {
@@ -5061,6 +5400,7 @@
   function showFavoritesPanel() {
     const existing = document.getElementById("osu-local-fav-panel");
     if (existing) {
+      closeFilterMenu();
       clearFavoritesPanelAudio();
       existing.remove();
       return;
@@ -5070,7 +5410,7 @@
       sortAsc = false,
       searchQuery = "",
       settingsOpen = false,
-      genreFilterState = {},
+      filterState = makeEmptyFilterState(),
       activeCollectionId = "";
 
     if (!document.getElementById("osu-fav-panel-style")) {
@@ -5260,6 +5600,7 @@
     closeBtn.style.cssText =
       "background:none;border:1px solid #333;color:#999;cursor:pointer;width:34px;height:34px;min-width:34px;min-height:34px;max-width:34px;max-height:34px;padding:0;border-radius:3px;font-size:13px;line-height:1;flex:0 0 34px;box-sizing:border-box;display:flex;align-items:center;justify-content:center";
     closeBtn.addEventListener("click", () => {
+      closeFilterMenu();
       clearFavoritesPanelAudio();
       panel.remove();
     });
@@ -5328,65 +5669,85 @@
     }
 
     const toolbar = document.createElement("div");
+    toolbar.id = "osu-fav-toolbar";
     toolbar.style.cssText =
-      "display:flex;align-items:center;gap:4px;padding:5px 14px;background:#1a1a1a;border-bottom:1px solid #333;flex-shrink:0;flex-wrap:wrap;row-gap:4px";
+      "display:flex;flex-direction:column;gap:5px;padding:6px 14px;background:#1a1a1a;" +
+      "border-bottom:1px solid #333;flex-shrink:0";
 
-    const sortGroup = document.createElement("div");
-    sortGroup.style.cssText = "display:flex;gap:2px;flex:1;flex-wrap:wrap;row-gap:4px";
+    const filterRow = document.createElement("div");
+    filterRow.style.cssText =
+      "display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;align-items:stretch";
 
-    const SORTS = ["date", "title", "artist", "status"];
-    const sortBtns = {};
-    SORTS.forEach((s) => {
+    const CHIP_BASE =
+      "font-size:10px;font-weight:500;padding:4px 6px;border:1px solid transparent;border-radius:3px;" +
+      "background:transparent;cursor:pointer;user-select:none;color:#666;white-space:nowrap;" +
+      "overflow:hidden;text-overflow:ellipsis;text-align:center;box-sizing:border-box;min-width:0;width:100%";
+
+    const filterBtns = {};
+    FILTER_CATEGORIES.forEach((cat) => {
       const btn = document.createElement("button");
-      btn.dataset.sort = s;
-      btn.style.cssText =
-        "font-size:10px;font-weight:500;padding:3px 7px;border:1px solid transparent;border-radius:3px;background:transparent;cursor:pointer;user-select:none;color:#666";
+      btn.type = "button";
+      btn.title = cat.title;
+      btn.style.cssText = CHIP_BASE + ";border-color:#333;color:#999";
       btn.addEventListener("click", () => {
-        if (currentSort === s) sortAsc = !sortAsc;
-        else {
-          currentSort = s;
-          sortAsc = false;
-        }
-        updateSortBtns();
-        renderList();
+        showFilterMenu(
+          btn,
+          {
+            collect: () => collectSectionsFor(cat),
+            searchable: cat.searchable,
+            placeholder: cat.placeholder,
+            emptyText: cat.emptyText,
+            sortOptions: cat.sortOptions,
+            isSortActive: !!cat.sortField && currentSort === cat.sortField,
+            sortAsc,
+            onSortSelect: cat.sortField
+              ? (asc) => {
+                  currentSort = cat.sortField;
+                  sortAsc = asc;
+                  updateFilterBtns();
+                  renderList();
+                }
+              : undefined,
+          },
+          filterState[cat.id],
+          (newState) => {
+            filterState[cat.id] = newState;
+            updateFilterBtn(cat.id);
+            updateClearAllRow();
+            renderList();
+          },
+        );
       });
-      sortGroup.appendChild(btn);
-      sortBtns[s] = btn;
+      filterRow.appendChild(btn);
+      filterBtns[cat.id] = btn;
     });
 
-    const genreBtn = document.createElement("button");
-    genreBtn.type = "button";
-    genreBtn.title = "Filter by genre or tag";
-    genreBtn.style.cssText =
-      "font-size:10px;font-weight:500;padding:3px 7px;border:1px solid transparent;border-radius:3px;background:transparent;cursor:pointer;user-select:none;color:#666;white-space:nowrap";
-    function updateGenreBtn() {
-      const active = Object.keys(genreFilterState).length;
-      genreBtn.textContent = "Genre" + (active ? ` (${active})` : "") + " \u25be";
-      genreBtn.style.background = active ? "var(--osu-fav-accent)" : "transparent";
-      genreBtn.style.color = active ? "#fff" : "#666";
-      genreBtn.style.borderColor = active ? "var(--osu-fav-accent)" : "transparent";
+    function updateFilterBtn(id) {
+      const cat = FILTER_CATEGORIES.find((c) => c.id === id);
+      const btn = filterBtns[id];
+      if (!cat || !btn) return;
+      const active = countActiveFilterTerms(filterState, id);
+      const isSort = !!cat.sortField && currentSort === cat.sortField;
+      const sortArrow = isSort ? (sortAsc ? " \u2191" : " \u2193") : "";
+      btn.textContent = cat.label + sortArrow + (active ? ` (${active})` : "") + " \u25be";
+      if (active) {
+        btn.style.background = "var(--osu-fav-accent)";
+        btn.style.color = "#fff";
+        btn.style.borderColor = "var(--osu-fav-accent)";
+      } else if (isSort) {
+        btn.style.background = "transparent";
+        btn.style.color = "var(--osu-fav-accent)";
+        btn.style.borderColor = "var(--osu-fav-accent)";
+      } else {
+        btn.style.background = "transparent";
+        btn.style.color = "#999";
+        btn.style.borderColor = "#333";
+      }
     }
-    updateGenreBtn();
-    genreBtn.addEventListener("click", () => {
-      showGenreFilterMenu(genreBtn, genreFilterState, (newState) => {
-        genreFilterState = newState;
-        updateGenreBtn();
-        renderList();
-      });
-    });
-    sortGroup.appendChild(genreBtn);
-
-    function updateSortBtns() {
-      SORTS.forEach((s) => {
-        const btn = sortBtns[s];
-        const label = s[0].toUpperCase() + s.slice(1);
-        btn.textContent =
-          label + (currentSort === s ? (sortAsc ? " ↑" : " ↓") : "");
-        btn.style.background = currentSort === s ? "var(--osu-fav-accent)" : "transparent";
-        btn.style.color = currentSort === s ? "#fff" : "#666";
-        btn.style.borderColor = currentSort === s ? "var(--osu-fav-accent)" : "transparent";
-      });
+    function updateFilterBtns() {
+      FILTER_CATEGORIES.forEach((c) => updateFilterBtn(c.id));
     }
+    updateFilterBtns();
 
     function makeBtn(label, extraStyle = "") {
       const btn = document.createElement("button");
@@ -5403,16 +5764,13 @@
       return btn;
     }
 
-    toolbar.appendChild(sortGroup);
-
     const collectionsBtn = document.createElement("button");
     collectionsBtn.type = "button";
     collectionsBtn.title = "Filter by collection";
-    collectionsBtn.style.cssText =
-      "font-size:10px;font-weight:500;padding:3px 7px;border:1px solid #333;border-radius:3px;background:transparent;cursor:pointer;user-select:none;color:#999;white-space:nowrap;flex-shrink:0;max-width:130px;overflow:hidden;text-overflow:ellipsis";
+    collectionsBtn.style.cssText = CHIP_BASE + ";border-color:#333;color:#999";
     function updateCollectionsBtn() {
       if (!activeCollectionId) {
-        collectionsBtn.textContent = "\ud83d\udcc1 Collections \u25be";
+        collectionsBtn.textContent = "\ud83d\udcc1 All \u25be";
         collectionsBtn.style.background = "transparent";
         collectionsBtn.style.color = "#999";
         collectionsBtn.style.borderColor = "#333";
@@ -5434,10 +5792,40 @@
       showCollectionsMenu(collectionsBtn, activeCollectionId, (newId) => {
         activeCollectionId = newId;
         updateCollectionsBtn();
+        updateClearAllRow();
         renderList();
       });
     });
-    toolbar.appendChild(collectionsBtn);
+    filterRow.appendChild(collectionsBtn);
+
+    const clearAllRow = document.createElement("div");
+    clearAllRow.style.cssText = "display:none";
+    const clearAllBtn = document.createElement("button");
+    clearAllBtn.type = "button";
+    clearAllBtn.textContent = "Clear all filters";
+    clearAllBtn.style.cssText =
+      "width:100%;box-sizing:border-box;font-size:10px;padding:3px 6px;border:1px solid #333;" +
+      "border-radius:3px;background:transparent;color:#888;cursor:pointer";
+    clearAllBtn.addEventListener("mouseenter", () => (clearAllBtn.style.color = "var(--osu-fav-accent)"));
+    clearAllBtn.addEventListener("mouseleave", () => (clearAllBtn.style.color = "#888"));
+    clearAllBtn.addEventListener("click", () => {
+      closeFilterMenu();
+      filterState = makeEmptyFilterState();
+      activeCollectionId = "";
+      updateFilterBtns();
+      updateCollectionsBtn();
+      updateClearAllRow();
+      renderList();
+    });
+    clearAllRow.appendChild(clearAllBtn);
+
+    function updateClearAllRow() {
+      const any = countActiveFilterTerms(filterState) > 0 || !!activeCollectionId;
+      clearAllRow.style.display = any ? "block" : "none";
+    }
+    updateClearAllRow();
+
+    toolbar.append(filterRow, clearAllRow);
 
     const contentArea = document.createElement("div");
     contentArea.style.cssText =
@@ -5886,6 +6274,7 @@
     function setView(showSettings) {
       settingsOpen = showSettings;
       toolbar.style.display = showSettings ? "none" : "flex";
+      if (showSettings) closeFilterMenu();
       listEl.style.display = showSettings ? "none" : "block";
       settingsView.style.display = showSettings ? "block" : "none";
       searchInput.style.display = showSettings ? "none" : "block";
@@ -5938,6 +6327,17 @@
       const favs = getFavorites();
       let entries = Object.entries(favs);
 
+      const viewKey = JSON.stringify([
+        currentSort,
+        sortAsc,
+        searchQuery.trim().toLowerCase(),
+        filterState,
+        activeCollectionId,
+      ]);
+      const sameView = viewKey === renderList._viewKey;
+      renderList._viewKey = viewKey;
+      const savedScroll = sameView ? listEl.scrollTop : 0;
+
       const cBadge = panel.querySelector("#osu-fav-count");
 
       if (searchQuery.trim()) {
@@ -5953,16 +6353,8 @@
         );
       }
 
-      const genreKeys = Object.keys(genreFilterState);
-      if (genreKeys.length) {
-        const includeTerms = genreKeys.filter((g) => genreFilterState[g] === "include");
-        const excludeTerms = genreKeys.filter((g) => genreFilterState[g] === "exclude");
-        entries = entries.filter(([, f]) => {
-          if (excludeTerms.some((k) => favMatchesGenreTerm(f, k))) return false;
-          if (includeTerms.length && !includeTerms.some((k) => favMatchesGenreTerm(f, k))) return false;
-          return true;
-        });
-      }
+      const filterPlan = buildFilterPlan(filterState);
+      if (filterPlan.length) entries = entries.filter(([, f]) => favMatchesPlan(f, filterPlan));
 
       if (activeCollectionId) {
         const col = getCollections()[activeCollectionId];
@@ -5982,6 +6374,8 @@
           cmp = (a.artist || "").localeCompare(b.artist || "");
         if (currentSort === "status")
           cmp = (a.status || "").localeCompare(b.status || "");
+        if (currentSort === "genre")
+          cmp = (a.genre || "").localeCompare(b.genre || "");
         if (cmp === 0) cmp = idB.localeCompare(idA);
         return sortAsc ? cmp : -cmp;
       });
@@ -5989,6 +6383,10 @@
       renderList._entries = entries;
 
       listEl.innerHTML = "";
+      if (savedScroll <= 0) {
+        listEl.scrollTop = 0;
+        lastListScrollTop = 0;
+      }
       renderList._token = (renderList._token || 0) + 1;
 
       if (renderList._imgObserver) {
@@ -6341,13 +6739,24 @@
       const CHUNK_SIZE = 25;
       const renderToken = renderList._token;
       let cursor = 0;
+      let scrollRestored = savedScroll <= 0;
+      const tryRestoreScroll = (finished) => {
+        if (scrollRestored) return;
+        const maxScroll = listEl.scrollHeight - listEl.clientHeight;
+        if (maxScroll < savedScroll && !finished) return;
+        listEl.scrollTop = Math.min(savedScroll, Math.max(0, maxScroll));
+        scrollRestored = true;
+        lastListScrollTop = listEl.scrollTop;
+      };
       const renderChunk = () => {
         if (renderList._token !== renderToken) return;
         const end = Math.min(cursor + CHUNK_SIZE, entries.length);
         const chunk = document.createDocumentFragment();
         for (; cursor < end; cursor++) chunk.appendChild(buildCard(entries[cursor]));
         listEl.appendChild(chunk);
-        if (cursor < entries.length) requestAnimationFrame(renderChunk);
+        const finished = cursor >= entries.length;
+        tryRestoreScroll(finished);
+        if (!finished) requestAnimationFrame(renderChunk);
       };
       if (entries.length) requestAnimationFrame(renderChunk);
     }
@@ -6407,7 +6816,6 @@
     bottomBar.append(nowPlayingBar, footer);
     panel.append(header, ...(githubBanner ? [githubBanner] : []), toolbar, contentArea, bottomBar);
     document.body.appendChild(panel);
-    updateSortBtns();
     panel._osuFavRefresh = renderList;
     renderList();
     updateFooterStatus();
@@ -7058,13 +7466,41 @@
     } catch (e) {
     }
 
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) {
-        invalidateFavoritesCache();
-        invalidateCollectionsCache();
-        refreshFavoritesPanel(true);
-        updateFloatingHeart();
+    let fingerprintWhenHidden = null;
+    let collectionsSnapshotWhenHidden = null;
+    function collectionsSnapshot() {
+      try {
+        const cols = getCollections();
+        return Object.keys(cols)
+          .sort()
+          .map((id) => id + ":" + (cols[id] && Array.isArray(cols[id].ids) ? cols[id].ids.length : 0) + ":" + ((cols[id] && cols[id].name) || ""))
+          .join("|");
+      } catch (e) {
+        return null;
       }
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        fingerprintWhenHidden = favoritesFingerprint();
+        collectionsSnapshotWhenHidden = collectionsSnapshot();
+        return;
+      }
+      const favsBefore = fingerprintWhenHidden;
+      const colsBefore = collectionsSnapshotWhenHidden;
+      fingerprintWhenHidden = null;
+      collectionsSnapshotWhenHidden = null;
+
+      reloadFavoritesQuietly();
+      invalidateCollectionsCache();
+
+      const changed =
+        favsBefore === null ||
+        favsBefore !== favoritesFingerprint() ||
+        colsBefore !== collectionsSnapshot();
+      if (!changed) return;
+
+      refreshFavoritesPanel(true);
+      updateFloatingHeart();
     });
 
     if (typeof GM_addValueChangeListener === "function") {

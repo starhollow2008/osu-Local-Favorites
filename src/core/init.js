@@ -1,10 +1,10 @@
 import { osuApiHandleOAuthCallback } from "../api/osu-api.js";
 import { _GM_CROSS_TAB_CHANNEL, _GM_CROSS_TAB_SYNC_KEY } from "./gm-shim.js";
 import { injectInterceptor } from "./interceptor.js";
-import { COLLECTIONS_KEY, invalidateCollectionsCache } from "../data/collections.js";
+import { COLLECTIONS_KEY, getCollections, invalidateCollectionsCache } from "../data/collections.js";
 import { addManyToEnrichQueue, ensureEnrichDrainerRunning, getEnrichQueue } from "../data/enrichment.js";
 import { invalidateLoginCache } from "../data/mirrors.js";
-import { STORAGE_KEY, getFavorites, invalidateFavoritesCache, onFavoritesChanged } from "../data/storage.js";
+import { STORAGE_KEY, favoritesFingerprint, getFavorites, invalidateFavoritesCache, onFavoritesChanged, reloadFavoritesQuietly } from "../data/storage.js";
 import { autoUpdateChecksEnabled, checkVersionUpdate, getCurrentVersion, isNewerVersion } from "../data/version-check.js";
 import { setMediaSessionMetadata, setMediaSessionPlaybackState } from "../ui/media-session.js";
 import { addFavoriteAllButtons } from "../ui/copy-all-button.js";
@@ -214,13 +214,49 @@ function init() {
   // A tab can be backgrounded while another tab changes the store. On return,
   // do one cheap authoritative re-read so a throttled background context
   // cannot leave the open panel visually stale.
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) {
-      invalidateFavoritesCache();
-      invalidateCollectionsCache();
-      refreshFavoritesPanel(true);
-      updateFloatingHeart();
+  //
+  // The re-read is unconditional; the *rebuild* is not. This used to call
+  // invalidateFavoritesCache() + refreshFavoritesPanel(true) every time the
+  // tab regained focus, and both of those force a full teardown of the list.
+  // Alt-tabbing away and back - or just switching browser tabs - therefore
+  // rebuilt the panel and dropped the user back at the top of the list, with
+  // nothing at all having changed. Compare a fingerprint of the store across
+  // the hidden period instead, and only repaint when it genuinely moved.
+  let fingerprintWhenHidden = null;
+  let collectionsSnapshotWhenHidden = null;
+  function collectionsSnapshot() {
+    try {
+      const cols = getCollections();
+      return Object.keys(cols)
+        .sort()
+        .map((id) => id + ":" + (cols[id] && Array.isArray(cols[id].ids) ? cols[id].ids.length : 0) + ":" + ((cols[id] && cols[id].name) || ""))
+        .join("|");
+    } catch (e) {
+      return null;
     }
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      fingerprintWhenHidden = favoritesFingerprint();
+      collectionsSnapshotWhenHidden = collectionsSnapshot();
+      return;
+    }
+    const favsBefore = fingerprintWhenHidden;
+    const colsBefore = collectionsSnapshotWhenHidden;
+    fingerprintWhenHidden = null;
+    collectionsSnapshotWhenHidden = null;
+
+    reloadFavoritesQuietly();
+    invalidateCollectionsCache();
+
+    const changed =
+      favsBefore === null ||
+      favsBefore !== favoritesFingerprint() ||
+      colsBefore !== collectionsSnapshot();
+    if (!changed) return;
+
+    refreshFavoritesPanel(true);
+    updateFloatingHeart();
   });
 
   // Collections (playlists) live under their own GM key, entirely separate

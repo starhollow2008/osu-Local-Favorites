@@ -120,6 +120,39 @@ export function invalidateFavoritesCache(nextFavorites) {
   notifyFavoritesChanged();
 }
 
+// Drops the cache and re-reads persisted state WITHOUT notifying listeners.
+// invalidateFavoritesCache() always announces a change, which is right for a
+// cross-tab write but wrong for a speculative re-read: the visibilitychange
+// handler in core/init.js re-reads on every single return to the tab, and
+// announcing that unconditionally rebuilt the open panel - losing the user's
+// place in the list - even when nothing had changed while they were away.
+// The caller compares favoritesFingerprint() before and after and decides.
+export function reloadFavoritesQuietly() {
+  _favsCache = null;
+  const favs = getFavorites();
+  _lastMembershipSignature = membershipSignature(favs);
+  return favs;
+}
+
+// A cheap content fingerprint: which ids are present, plus enough of each
+// record to notice enrichment filling in metadata. Deliberately not a
+// JSON.stringify of the store - that is multi-megabyte on a large library
+// and this runs every time the tab regains focus. O(n) integer work.
+export function favoritesFingerprint(favs) {
+  const store = favs || getFavorites();
+  let count = 0;
+  let hash = 0;
+  for (const id in store) {
+    count++;
+    const f = store[id] || {};
+    hash = (hash * 31 + (Number(id) || 0)) | 0;
+    hash = (hash * 31 + (f.title ? f.title.length : 0)) | 0;
+    hash = (hash * 31 + (f.artist ? f.artist.length : 0)) | 0;
+    hash = (hash * 31 + (f.metadata_enriched ? 1 : 0)) | 0;
+  }
+  return count + ":" + hash;
+}
+
 // Invalidate on cross-tab writes in the localStorage-fallback mode. (In
 // native GM mode this event never fires for GM storage - init()'s
 // GM_addValueChangeListener handler covers that path instead.)

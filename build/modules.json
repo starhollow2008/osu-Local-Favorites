@@ -31,6 +31,8 @@
     "ui/audio-player.js",
     "ui/download-menu.js",
     "ui/genre-filter.js",
+    "ui/filter-menu.js",
+    "ui/filters.js",
     "ui/collections-menu.js",
     "api/gist-backup.js",
     "api/osu-api.js",
